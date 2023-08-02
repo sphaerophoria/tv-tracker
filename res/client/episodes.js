@@ -1,14 +1,3 @@
-"use strict";
-
-function handle_search(element) {
-  if (event.key === "Enter") {
-    const request = new Request("/search?" + element.value, {
-      method: "GET",
-    });
-    fetch(request);
-  }
-}
-
 function request_episodes() {
   const request = new Request("/episodes", {
     method: "GET",
@@ -32,7 +21,7 @@ function get_next_episode(episodes, today) {
   return next;
 }
 
-async function init() {
+async function populate_episodes() {
   const response = await request_episodes();
   const json = await response.json();
   const upcoming_div = document.getElementById("upcoming_episodes");
@@ -58,6 +47,10 @@ async function init() {
   }
 
   upcoming_div.innerHTML = rendered;
+}
+
+async function init() {
+  populate_episodes();
 }
 
 init();

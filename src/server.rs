@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use tempfile::TempDir;
 use thiserror::Error;
 use tracing::info;
@@ -37,6 +38,20 @@ async fn handle_episodes<T: Indexer>(
     Ok(serde_json::to_value(app.episodes())?)
 }
 
+#[derive(Deserialize)]
+struct SearchQueryParams {
+    query: String,
+}
+
+async fn handle_search<T: Indexer>(
+    req: tide::Request<Arc<Mutex<App<T>>>>,
+) -> tide::Result<serde_json::Value> {
+    let mut app = req.state().lock().expect("Invalid lock");
+    let query: SearchQueryParams = req.query()?;
+    let results = app.search(&query.query)?;
+    Ok(serde_json::to_value(results)?)
+}
+
 #[derive(Error, Debug)]
 pub enum ServerCreationError {
     #[error("failed to extract client")]
@@ -55,7 +70,7 @@ impl<T: Indexer> Server<T> {
         let mut app = tide::with_state(Arc::new(Mutex::new(app)));
         let embedded_html_dir = extract_client()?;
 
-        app.at("/").get(tide::Redirect::new("/index.html"));
+        app.at("/").get(tide::Redirect::new("/episodes.html"));
         if let Some(data_path) = data_path {
             info!("Overriding embedded html with {}", data_path.display());
             app.at("/")
@@ -68,6 +83,7 @@ impl<T: Indexer> Server<T> {
         }
 
         app.at("/episodes").get(handle_episodes);
+        app.at("/search").get(handle_search);
 
         Ok(Server {
             app,

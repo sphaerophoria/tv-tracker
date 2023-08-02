@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use isahc::error::Error as IsahcError;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
@@ -18,9 +19,18 @@ type TvMazeSearchResult = Vec<TvMazeSearchItem>;
 pub struct TvMazeShowId(i64);
 
 #[derive(Serialize, Deserialize, Debug)]
+struct TvMazeImage {
+    medium: String,
+    original: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 struct TvMazeShow {
     id: TvMazeShowId,
     name: String,
+    premiered: Option<chrono::NaiveDate>,
+    image: Option<TvMazeImage>,
+    url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -34,6 +44,9 @@ impl From<TvMazeSearchItem> for TvShow<TvMazeShowId> {
         TvShow {
             id: value.show.id,
             name: value.show.name,
+            year: value.show.premiered.map(|d| d.year()),
+            url: value.show.url,
+            image: value.show.image.map(|i| i.medium),
         }
     }
 }
@@ -81,7 +94,7 @@ impl TvMazeIndexer {
         TvMazeIndexer {}
     }
 
-    pub fn send_request<T: DeserializeOwned>(&mut self, url: &str) -> Result<T, TvMazeApiError> {
+    pub fn send_request<T: DeserializeOwned>(&self, url: &str) -> Result<T, TvMazeApiError> {
         let url = tvmaze_api_url(url);
         debug!("Sending requsest to {url}");
         let mut response = isahc::get(url)?;
@@ -100,16 +113,13 @@ impl Indexer for TvMazeIndexer {
     type EpisodeId = TvMazeEpisodeId;
     type Err = TvMazeApiError;
 
-    fn search(&mut self, query: &str) -> Result<Vec<TvShow<Self::ShowId>>, Self::Err> {
+    fn search(&self, query: &str) -> Result<Vec<TvShow<Self::ShowId>>, Self::Err> {
         let query: &str = &urlencoding::encode(query);
         let shows: TvMazeSearchResult = self.send_request(&format!("/search/shows?q={query}"))?;
         Ok(shows.into_iter().map(Into::into).collect())
     }
 
-    fn episodes(
-        &mut self,
-        show: &TvMazeShowId,
-    ) -> Result<Vec<TvEpisode<Self::EpisodeId>>, Self::Err> {
+    fn episodes(&self, show: &TvMazeShowId) -> Result<Vec<TvEpisode<Self::EpisodeId>>, Self::Err> {
         let episodes: TvMazeEpisodes = self.send_request(&format!("/shows/{}/episodes", show.0))?;
         Ok(episodes.into_iter().map(Into::into).collect())
     }
@@ -121,7 +131,10 @@ mod test {
 
     #[test]
     fn test_search_deserialization() {
-        let body = include_bytes!("../res/tv_maze/search_result.json");
+        let body = include_bytes!("../res/tv_maze/search_result_banshee.json");
+        serde_json::from_slice::<TvMazeSearchResult>(body).expect("Failed to deserialize");
+
+        let body = include_bytes!("../res/tv_maze/search_result_arcane.json");
         serde_json::from_slice::<TvMazeSearchResult>(body).expect("Failed to deserialize");
     }
 

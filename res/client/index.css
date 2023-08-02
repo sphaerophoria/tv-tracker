@@ -1,0 +1,36 @@
+#search-container {
+  display: flex;
+  flex-direction: row;
+}
+
+#show-search {
+  flex-grow: 50;
+}
+
+#show-search-button {
+  flex-grow: 1;
+}
+
+
+#search-results {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.show-card {
+  margin: 2px;
+  display: flex;
+  flex-direction: column;
+  width: 15%;
+}
+
+.card-placeholder-image {
+  /* Measured poster size as 210 x 295 */
+  max-width: 100%;
+  aspect-ratio: 210 / 295;
+}
+
+.card-image {
+  /* Match the placeholder div display type */
+  display: block
+}

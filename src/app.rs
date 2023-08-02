@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use crate::indexer::{Indexer, TvEpisodes};
+use crate::indexer::{Indexer, TvEpisodes, TvShows};
 
 type TvEpisodeMap<T> = HashMap<String, TvEpisodes<T>>;
 type SharedTvEpisodeMap<T> = Arc<Mutex<TvEpisodeMap<T>>>;
@@ -17,7 +17,7 @@ type SharedTvEpisodeMap<T> = Arc<Mutex<TvEpisodeMap<T>>>;
 struct IndexPoller<I: Indexer> {
     show_list: PathBuf,
     episode_map: SharedTvEpisodeMap<I::EpisodeId>,
-    indexer: I,
+    indexer: Arc<I>,
 }
 
 impl<I> IndexPoller<I>
@@ -78,16 +78,18 @@ where
 
 pub struct App<I: Indexer> {
     episode_map: SharedTvEpisodeMap<I::EpisodeId>,
+    indexer: Arc<I>,
 }
 
 impl<I: Indexer> App<I> {
     pub fn new(show_list: PathBuf, indexer: I) -> App<I> {
         let episode_map = Arc::new(Mutex::new(Default::default()));
+        let indexer = Arc::new(indexer);
 
         let mut poller = IndexPoller {
             show_list,
             episode_map: Arc::clone(&episode_map),
-            indexer,
+            indexer: Arc::clone(&indexer),
         };
 
         info!("Initializing episode map");
@@ -97,11 +99,19 @@ impl<I: Indexer> App<I> {
             poller.run();
         });
 
-        App { episode_map }
+        App {
+            episode_map,
+            indexer,
+        }
     }
 
     pub fn episodes(&mut self) -> TvEpisodeMap<I::EpisodeId> {
         (*self.episode_map.lock().expect("Poisoned lock")).clone()
+    }
+
+    pub fn search(&mut self, query: &str) -> Result<TvShows<I::ShowId>, I::Err> {
+        let results = self.indexer.search(query)?;
+        Ok(results)
     }
 }
 
