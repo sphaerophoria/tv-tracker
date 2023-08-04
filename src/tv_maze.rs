@@ -6,57 +6,76 @@ use tracing::debug;
 
 use std::io::Read;
 
-use crate::indexer::{Indexer, TvEpisode, TvShow};
+use crate::types::{ImdbShowId, TvEpisode, TvShow, TvdbShowId};
 
 fn tvmaze_api_url(url: &str) -> String {
     const API_ROOT: &str = "https://api.tvmaze.com";
     format!("{API_ROOT}{url}")
 }
 
-type TvMazeSearchResult = Vec<TvMazeSearchItem>;
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct TvMazeShowId(pub i64);
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct TvMazeShowId(i64);
-
-#[derive(Serialize, Deserialize, Debug)]
-struct TvMazeImage {
+struct ApiImage {
     medium: String,
     original: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct TvMazeShow {
-    id: TvMazeShowId,
-    name: String,
-    premiered: Option<chrono::NaiveDate>,
-    image: Option<TvMazeImage>,
-    url: Option<String>,
+struct ApiExternals {
+    thetvdb: Option<TvdbShowId>,
+    imdb: Option<ImdbShowId>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct TvMazeSearchItem {
-    score: f32,
-    show: TvMazeShow,
+struct ApiShow {
+    id: TvMazeShowId,
+    name: String,
+    premiered: Option<chrono::NaiveDate>,
+    image: Option<ApiImage>,
+    url: Option<String>,
+    externals: Option<ApiExternals>,
 }
 
-impl From<TvMazeSearchItem> for TvShow<TvMazeShowId> {
-    fn from(value: TvMazeSearchItem) -> Self {
+impl From<ApiShow> for TvShow {
+    fn from(value: ApiShow) -> Self {
         TvShow {
-            id: value.show.id,
-            name: value.show.name,
-            year: value.show.premiered.map(|d| d.year()),
-            url: value.show.url,
-            image: value.show.image.map(|i| i.medium),
+            name: value.name,
+            year: value.premiered.map(|d| d.year()),
+            url: value.url,
+            image: value.image.map(|i| i.medium),
+            imdb_id: value.externals.as_ref().and_then(|x| x.imdb.clone()),
+            tvdb_id: value.externals.as_ref().and_then(|x| x.thetvdb),
         }
     }
 }
+#[derive(Serialize, Deserialize, Debug)]
+struct ApiSearchItem {
+    score: f32,
+    show: ApiShow,
+}
 
-type TvMazeEpisodes = Vec<TvMazeEpisode>;
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TvMazeShow {
+    pub id: TvMazeShowId,
+    pub show: TvShow,
+}
+
+impl From<ApiSearchItem> for TvMazeShow {
+    fn from(value: ApiSearchItem) -> Self {
+        let id = value.show.id.clone();
+        let show = value.show.into();
+
+        TvMazeShow { id, show }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TvMazeEpisodeId(i64);
 
 #[derive(Serialize, Deserialize, Debug)]
-struct TvMazeEpisode {
+struct ApiEpisode {
     id: TvMazeEpisodeId,
     name: String,
     season: i64,
@@ -64,10 +83,9 @@ struct TvMazeEpisode {
     airdate: chrono::NaiveDate,
 }
 
-impl From<TvMazeEpisode> for TvEpisode<TvMazeEpisodeId> {
-    fn from(value: TvMazeEpisode) -> Self {
+impl From<ApiEpisode> for TvEpisode {
+    fn from(value: ApiEpisode) -> Self {
         TvEpisode {
-            id: value.id,
             name: value.name,
             season: value.season,
             episode: value.number,
@@ -86,43 +104,33 @@ pub enum TvMazeApiError {
     Parse(#[from] serde_json::Error),
 }
 
-#[derive(Debug)]
-pub struct TvMazeIndexer {}
+fn send_request<T: DeserializeOwned>(url: &str) -> Result<T, TvMazeApiError> {
+    let url = tvmaze_api_url(url);
+    debug!("Sending requsest to {url}");
+    let mut response = isahc::get(url)?;
+    let body = response.body_mut();
 
-impl TvMazeIndexer {
-    pub fn new() -> TvMazeIndexer {
-        TvMazeIndexer {}
-    }
+    let mut body_s = String::new();
+    body.read_to_string(&mut body_s)?;
 
-    pub fn send_request<T: DeserializeOwned>(&self, url: &str) -> Result<T, TvMazeApiError> {
-        let url = tvmaze_api_url(url);
-        debug!("Sending requsest to {url}");
-        let mut response = isahc::get(url)?;
-        let body = response.body_mut();
-
-        let mut body_s = String::new();
-        body.read_to_string(&mut body_s)?;
-
-        debug!("Returned content {}", body_s);
-        Ok(serde_json::from_str(&body_s)?)
-    }
+    debug!("Returned content {}", body_s);
+    Ok(serde_json::from_str(&body_s)?)
 }
 
-impl Indexer for TvMazeIndexer {
-    type ShowId = TvMazeShowId;
-    type EpisodeId = TvMazeEpisodeId;
-    type Err = TvMazeApiError;
+pub fn show(id: &TvMazeShowId) -> Result<TvShow, TvMazeApiError> {
+    let show: ApiShow = send_request(&format!("/shows/{}", id.0))?;
+    Ok(show.into())
+}
 
-    fn search(&self, query: &str) -> Result<Vec<TvShow<Self::ShowId>>, Self::Err> {
-        let query: &str = &urlencoding::encode(query);
-        let shows: TvMazeSearchResult = self.send_request(&format!("/search/shows?q={query}"))?;
-        Ok(shows.into_iter().map(Into::into).collect())
-    }
+pub fn search(query: &str) -> Result<Vec<TvMazeShow>, TvMazeApiError> {
+    let query: &str = &urlencoding::encode(query);
+    let shows: Vec<ApiSearchItem> = send_request(&format!("/search/shows?q={query}"))?;
+    Ok(shows.into_iter().map(Into::into).collect())
+}
 
-    fn episodes(&self, show: &TvMazeShowId) -> Result<Vec<TvEpisode<Self::EpisodeId>>, Self::Err> {
-        let episodes: TvMazeEpisodes = self.send_request(&format!("/shows/{}/episodes", show.0))?;
-        Ok(episodes.into_iter().map(Into::into).collect())
-    }
+pub fn episodes(show: &TvMazeShowId) -> Result<Vec<TvEpisode>, TvMazeApiError> {
+    let episodes: Vec<ApiEpisode> = send_request(&format!("/shows/{}/episodes", show.0))?;
+    Ok(episodes.into_iter().map(Into::into).collect())
 }
 
 #[cfg(test)]
@@ -132,15 +140,15 @@ mod test {
     #[test]
     fn test_search_deserialization() {
         let body = include_bytes!("../res/tv_maze/search_result_banshee.json");
-        serde_json::from_slice::<TvMazeSearchResult>(body).expect("Failed to deserialize");
+        serde_json::from_slice::<Vec<ApiSearchItem>>(body).expect("Failed to deserialize");
 
         let body = include_bytes!("../res/tv_maze/search_result_arcane.json");
-        serde_json::from_slice::<TvMazeSearchResult>(body).expect("Failed to deserialize");
+        serde_json::from_slice::<Vec<ApiSearchItem>>(body).expect("Failed to deserialize");
     }
 
     #[test]
     fn test_episodes_deserialization() {
         let body = include_bytes!("../res/tv_maze/episodes_result.json");
-        serde_json::from_slice::<TvMazeEpisodes>(body).expect("Failed to deserialize");
+        serde_json::from_slice::<Vec<ApiEpisode>>(body).expect("Failed to deserialize");
     }
 }

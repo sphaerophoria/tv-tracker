@@ -24,29 +24,36 @@ function handle_search_keypress(event) {
   }
 }
 
+async function handle_add(item) {
+  console.log(item);
+  const request = new Request("/add_show", {
+    method: "PUT",
+    body: JSON.stringify({
+      id: item,
+    }),
+  });
+  fetch(request);
+}
+
 function render_show(item) {
   var rendered = '<div class="show-card">';
 
-  if (item.url !== null) {
-    rendered += "<a href=" + item.url + ">";
+  if (item.show.url !== null) {
+    rendered += "<a href=" + item.show.url + ">";
   }
 
-  if (item.image !== null) {
-    rendered += '<img class="card-image" src=' + item.image + ">";
+  if (item.show.image !== null) {
+    rendered += '<img class="card-image" src=' + item.show.image + ">";
   } else {
     rendered += '<div class="card-placeholder-image"></div>';
   }
 
-  rendered += item.name;
-
-  if (item.year !== null) {
-    rendered += " (" + item.year + ")";
-  }
-
-  if (item.url !== null) {
+  if (item.show.url !== null) {
     rendered += "</a>";
   }
 
+  rendered +=
+    '<input onclick="handle_add(' + item.id + ')" type="button" value="+"/>';
   rendered += "</div>";
 
   return rendered;

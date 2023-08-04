@@ -4,11 +4,13 @@ use thiserror::Error;
 use std::path::PathBuf;
 
 use app::App;
+use db::Db;
 
 mod app;
-mod indexer;
+mod db;
 mod server;
 mod tv_maze;
+mod types;
 
 #[derive(Error, Debug)]
 enum ArgParseError {
@@ -18,14 +20,14 @@ enum ArgParseError {
     NoPort,
     #[error("No invalid port")]
     InvalidPort(#[source] std::num::ParseIntError),
-    #[error("No show list argument provided")]
-    NoShowList,
+    #[error("No db path provided")]
+    NoDbPath,
 }
 
 struct Args {
     html_path: Option<PathBuf>,
     port: i16,
-    show_list: PathBuf,
+    db_path: PathBuf,
 }
 
 impl Args {
@@ -34,8 +36,8 @@ impl Args {
         let _process_name = args.next();
 
         let mut html_path = None;
+        let mut db_path = None;
         let mut port = None;
-        let mut show_list = None;
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--help" => {
@@ -45,10 +47,12 @@ impl Args {
                 "--html-path" => {
                     html_path = args.next().map(Into::into);
                 }
+                "--db-path" => {
+                    db_path = args.next().map(Into::into);
+                }
                 "--port" => {
                     port = args.next().map(|s| s.parse());
                 }
-                "--show-list" => show_list = args.next().map(Into::into),
                 _ => {
                     return Err(ArgParseError::UnknownArg(arg));
                 }
@@ -59,12 +63,12 @@ impl Args {
             .ok_or(ArgParseError::NoPort)?
             .map_err(ArgParseError::InvalidPort)?;
 
-        let show_list = show_list.ok_or(ArgParseError::NoShowList)?;
+        let db_path = db_path.ok_or(ArgParseError::NoDbPath)?;
 
         let ret = Args {
             html_path,
             port,
-            show_list,
+            db_path,
         };
 
         Ok(ret)
@@ -84,7 +88,7 @@ impl Args {
                 --help: Show this help\n\
                 --html-path: Optional path to filesystem to serve html files from. Useful for \
                 debugging\n\
-                --show-list: List of shows to monitor, newline separated titles\n\
+                --db-path: Where to store database\n\
                 --port: Port to serve UI on\n\
                 "
         )
@@ -104,8 +108,8 @@ fn main() {
         }
     };
 
-    let indexer = tv_maze::TvMazeIndexer::new();
-    let app = App::new(args.show_list, indexer);
+    let db = Db::new(&args.db_path).unwrap();
+    let app = App::new(db);
     let server = Server::new(args.html_path.as_deref(), app).unwrap();
     futures::executor::block_on(server.serve(args.port)).unwrap();
 }

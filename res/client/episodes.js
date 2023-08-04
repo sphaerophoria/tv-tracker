@@ -5,6 +5,13 @@ function request_episodes() {
   return fetch(request);
 }
 
+function request_shows() {
+  const request = new Request("/shows", {
+    method: "GET",
+  });
+  return fetch(request);
+}
+
 function get_next_episode(episodes, today) {
   var next = null;
   var next_date = null;
@@ -24,14 +31,20 @@ function get_next_episode(episodes, today) {
 async function populate_episodes() {
   const response = await request_episodes();
   const json = await response.json();
+
+  const shows_response = await request_shows();
+  const shows_json = await shows_response.json();
+
   const upcoming_div = document.getElementById("upcoming_episodes");
   let rendered = "";
   const today = Date.now();
-  for (const show_name in json) {
-    const episodes = json[show_name];
+  for (const show_id in json) {
+    const episodes = json[show_id];
+    const show_name = shows_json[show_id].name;
     const next_episode = get_next_episode(episodes, today);
     if (next_episode === null) {
-      rendered += "<li>" + show_name + " ended" + "</li>";
+      rendered +=
+        "<li>" + show_name + " has no new episodes scheduled" + "</li>";
     } else {
       rendered +=
         "<li>" +

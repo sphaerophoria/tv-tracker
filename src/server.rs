@@ -3,13 +3,9 @@ use tempfile::TempDir;
 use thiserror::Error;
 use tracing::info;
 
-use std::{
-    fs::File,
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use std::{fs::File, path::Path};
 
-use crate::{app::App, indexer::Indexer};
+use crate::{app::App, tv_maze::TvMazeShowId};
 
 #[derive(Error, Debug)]
 pub enum ClientExtractionError {
@@ -31,10 +27,13 @@ fn extract_client() -> Result<TempDir, ClientExtractionError> {
     Ok(d)
 }
 
-async fn handle_episodes<T: Indexer>(
-    req: tide::Request<Arc<Mutex<App<T>>>>,
-) -> tide::Result<serde_json::Value> {
-    let mut app = req.state().lock().expect("Invalid lock");
+async fn handle_shows(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let app = req.state();
+    Ok(serde_json::to_value(app.shows()?)?)
+}
+
+async fn handle_episodes(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let app = req.state();
     Ok(serde_json::to_value(app.episodes())?)
 }
 
@@ -43,13 +42,23 @@ struct SearchQueryParams {
     query: String,
 }
 
-async fn handle_search<T: Indexer>(
-    req: tide::Request<Arc<Mutex<App<T>>>>,
-) -> tide::Result<serde_json::Value> {
-    let mut app = req.state().lock().expect("Invalid lock");
+async fn handle_search(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let app = req.state();
     let query: SearchQueryParams = req.query()?;
     let results = app.search(&query.query)?;
     Ok(serde_json::to_value(results)?)
+}
+
+#[derive(Debug, Deserialize)]
+struct AddRequest {
+    id: TvMazeShowId,
+}
+
+async fn handle_add(mut req: tide::Request<App>) -> tide::Result<tide::StatusCode> {
+    let request: AddRequest = req.body_json().await?;
+    let app = req.state();
+    app.add_show(&request.id)?;
+    Ok(tide::StatusCode::Ok)
 }
 
 #[derive(Error, Debug)]
@@ -60,14 +69,14 @@ pub enum ServerCreationError {
     ServeDir(#[source] std::io::Error),
 }
 
-pub struct Server<T: Indexer> {
-    app: tide::Server<Arc<Mutex<App<T>>>>,
+pub struct Server {
+    app: tide::Server<App>,
     _embedded_html_dir: TempDir,
 }
 
-impl<T: Indexer> Server<T> {
-    pub fn new(data_path: Option<&Path>, app: App<T>) -> Result<Server<T>, ServerCreationError> {
-        let mut app = tide::with_state(Arc::new(Mutex::new(app)));
+impl Server {
+    pub fn new(data_path: Option<&Path>, app: App) -> Result<Server, ServerCreationError> {
+        let mut app = tide::with_state(app);
         let embedded_html_dir = extract_client()?;
 
         app.at("/").get(tide::Redirect::new("/episodes.html"));
@@ -82,8 +91,10 @@ impl<T: Indexer> Server<T> {
                 .map_err(ServerCreationError::ServeDir)?;
         }
 
+        app.at("/shows").get(handle_shows);
         app.at("/episodes").get(handle_episodes);
         app.at("/search").get(handle_search);
+        app.at("/add_show").put(handle_add);
 
         Ok(Server {
             app,
