@@ -9,9 +9,9 @@ use std::{
 };
 
 use crate::{
-    db::{AddShowError as DbAddShowError, Db, GetShowError},
+    db::{self, AddShowError as DbAddShowError, Db, GetShowError},
     tv_maze::{self, TvMazeApiError, TvMazeShow, TvMazeShowId},
-    types::{ShowId, TvEpisode, TvShow},
+    types::{EpisodeId, ShowId, TvEpisode, TvShow},
 };
 
 #[derive(Debug, Error)]
@@ -57,16 +57,23 @@ impl IndexPoller {
             ret.insert(*show_id, episodes);
         }
 
-        self.inner.lock().expect("Poisoned lock").episodes = ret;
+        let mut inner = self.inner.lock().expect("Poisoned lock");
+        for (show_id, episodes) in ret {
+            for episode in episodes {
+                if let Err(e) = inner.db.add_episode(&show_id, &episode) {
+                    error!("Failed to add episode: {e}");
+                }
+            }
+        }
     }
 
     fn run(mut self) {
         loop {
-            const HOUR_IN_SECONDS: u64 = 60 * 60;
-            std::thread::sleep(Duration::from_secs(HOUR_IN_SECONDS));
-
             info!("Updating episode map");
             self.poll();
+
+            const HOUR_IN_SECONDS: u64 = 60 * 60;
+            std::thread::sleep(Duration::from_secs(HOUR_IN_SECONDS));
         }
     }
 }
@@ -79,7 +86,6 @@ pub struct SearchResults {
 
 pub struct Inner {
     db: Db,
-    episodes: HashMap<ShowId, Vec<TvEpisode>>,
 }
 
 type SharedInner = Arc<Mutex<Inner>>;
@@ -91,19 +97,13 @@ pub struct App {
 
 impl App {
     pub fn new(db: Db) -> App {
-        let inner = Inner {
-            db,
-            episodes: Default::default(),
-        };
+        let inner = Inner { db };
 
         let inner = Arc::new(Mutex::new(inner));
 
-        let mut poller = IndexPoller {
+        let poller = IndexPoller {
             inner: Arc::clone(&inner),
         };
-
-        info!("Initializing episode map");
-        poller.poll();
 
         std::thread::spawn(move || {
             poller.run();
@@ -131,7 +131,11 @@ impl App {
             .add_show(&show, indexer_show_id)
             .map_err(AddShowError::AddShowToDb)?;
 
-        inner.episodes.insert(show_id, episodes);
+        for episode in episodes {
+            if let Err(e) = inner.db.add_episode(&show_id, &episode) {
+                error!("Failed to insert episode into db: {e}");
+            }
+        }
 
         Ok(())
     }
@@ -149,8 +153,12 @@ impl App {
         Ok(ret)
     }
 
-    pub fn episodes(&self) -> HashMap<ShowId, Vec<TvEpisode>> {
-        self.inner.lock().expect("Poisoned lock").episodes.clone()
+    pub fn episodes(
+        &self,
+        show_id: &ShowId,
+    ) -> Result<HashMap<EpisodeId, TvEpisode>, db::GetEpisodeError> {
+        let inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.get_episodes(show_id)
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<TvMazeShow>, TvMazeApiError> {

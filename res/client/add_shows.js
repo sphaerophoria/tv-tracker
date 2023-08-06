@@ -25,7 +25,6 @@ function handle_search_keypress(event) {
 }
 
 async function handle_add(item) {
-  console.log(item);
   const request = new Request("/add_show", {
     method: "PUT",
     body: JSON.stringify({
@@ -36,7 +35,7 @@ async function handle_add(item) {
 }
 
 function render_show(item) {
-  var rendered = '<div class="show-card">';
+  let rendered = '<div class="show-card">';
 
   if (item.show.url !== null) {
     rendered += "<a href=" + item.show.url + ">";
@@ -69,7 +68,7 @@ async function execute_search() {
 
   const search_results = document.getElementById("search-results");
 
-  var new_html = "";
+  let new_html = "";
 
   for (const i in response_body) {
     const item = response_body[i];

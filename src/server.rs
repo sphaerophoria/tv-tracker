@@ -5,7 +5,7 @@ use tracing::info;
 
 use std::{fs::File, path::Path};
 
-use crate::{app::App, tv_maze::TvMazeShowId};
+use crate::{app::App, tv_maze::TvMazeShowId, types::ShowId};
 
 #[derive(Error, Debug)]
 pub enum ClientExtractionError {
@@ -32,9 +32,15 @@ async fn handle_shows(req: tide::Request<App>) -> tide::Result<serde_json::Value
     Ok(serde_json::to_value(app.shows()?)?)
 }
 
+#[derive(Deserialize)]
+struct GetEpisodesQueryParams {
+    show_id: ShowId,
+}
+
 async fn handle_episodes(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
     let app = req.state();
-    Ok(serde_json::to_value(app.episodes())?)
+    let query: GetEpisodesQueryParams = req.query()?;
+    Ok(serde_json::to_value(app.episodes(&query.show_id)?)?)
 }
 
 #[derive(Deserialize)]

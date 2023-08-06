@@ -1,22 +1,12 @@
-function request_episodes() {
-  const request = new Request("/episodes", {
-    method: "GET",
-  });
-  return fetch(request);
-}
+"use strict";
 
-function request_shows() {
-  const request = new Request("/shows", {
-    method: "GET",
-  });
-  return fetch(request);
-}
+import { request_episodes, request_shows } from "./http.js";
 
 function get_next_episode(episodes, today) {
-  var next = null;
-  var next_date = null;
+  let next = null;
+  let next_date = null;
 
-  for (var i = 1; i < episodes.length; i++) {
+  for (const i in episodes) {
     const this_date = Date.parse(episodes[i].airdate);
 
     if (today < this_date && (next_date === null || next_date > this_date)) {
@@ -29,18 +19,27 @@ function get_next_episode(episodes, today) {
 }
 
 async function populate_episodes() {
-  const response = await request_episodes();
-  const json = await response.json();
+  let shows = await request_shows();
+  let show_ids = [];
+  let promises = [];
+  for (let show_id in shows) {
+    show_ids.push(show_id);
+    promises.push(request_episodes(show_id));
+  }
 
-  const shows_response = await request_shows();
-  const shows_json = await shows_response.json();
+  let show_episodes = await Promise.all(promises);
+  let episodes_json = show_ids.map((show_id, idx) => [
+    show_id,
+    show_episodes[idx],
+  ]);
+  episodes_json = new Map(episodes_json);
 
   const upcoming_div = document.getElementById("upcoming_episodes");
   let rendered = "";
   const today = Date.now();
-  for (const show_id in json) {
-    const episodes = json[show_id];
-    const show_name = shows_json[show_id].name;
+  for (const show_id of episodes_json.keys()) {
+    const episodes = episodes_json.get(show_id);
+    const show_name = shows[show_id].name;
     const next_episode = get_next_episode(episodes, today);
     if (next_episode === null) {
       rendered +=

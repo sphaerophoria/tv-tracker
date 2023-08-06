@@ -16,7 +16,7 @@ pub struct TvShow {
     pub tvdb_id: Option<TvdbShowId>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct TvEpisode {
     pub name: String,
     pub season: i64,
@@ -27,11 +27,5 @@ pub struct TvEpisode {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct ShowId(pub i64);
 
-impl ShowId {
-    pub fn new(id: i64) -> ShowId {
-        ShowId(id)
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-pub struct EpisodeId(usize);
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
+pub struct EpisodeId(pub i64);
