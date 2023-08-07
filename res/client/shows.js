@@ -2,12 +2,16 @@
 
 import { request_episodes, request_shows } from "./http.js";
 
+function sort_shows_by_name(shows) {
+  shows.sort((a, b) => a[1].name.toLowerCase() > b[1].name.toLowerCase());
+}
+
 function render_shows(shows) {
   let ret = "<h1>Shows</h1>";
 
-  for (const show_id in shows) {
+  for (let [show_id, show] of shows) {
     ret += '<a href="/show.html?show_id=' + show_id + '">';
-    ret += shows[show_id].name;
+    ret += show.name;
     ret += "</a>";
     ret += "<br>";
   }
@@ -15,7 +19,10 @@ function render_shows(shows) {
 }
 
 async function init() {
-  const shows = await request_shows();
+  let shows = await request_shows();
+
+  shows = Object.entries(shows);
+  sort_shows_by_name(shows);
 
   const shows_list = document.getElementById("shows_list");
   shows_list.innerHTML = render_shows(shows);
