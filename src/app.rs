@@ -73,8 +73,8 @@ impl IndexPoller {
             info!("Updating episode map");
             self.poll();
 
-            const HOUR_IN_SECONDS: u64 = 60 * 60;
-            std::thread::sleep(Duration::from_secs(HOUR_IN_SECONDS));
+            const DAY_IN_SECONDS: u64 = 24 * 60 * 60;
+            std::thread::sleep(Duration::from_secs(DAY_IN_SECONDS));
         }
     }
 }
