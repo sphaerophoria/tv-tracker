@@ -31,12 +31,8 @@ pub enum GetShowError {
     Prepare(#[source] rusqlite::Error),
     #[error("failed to execute get show request")]
     Execute(#[source] rusqlite::Error),
-    #[error("too many results for query")]
-    TooManyRows,
     #[error("failed to get row from query response")]
     GetRow(#[source] rusqlite::Error),
-    #[error("show not found")]
-    ShowNotFound,
     #[error("failed to get id")]
     GetId(#[source] rusqlite::Error),
     #[error("failed to get tv maze id")]
@@ -164,59 +160,56 @@ impl Db {
         Ok(ShowId(self.connection.last_insert_rowid()))
     }
 
-    pub fn get_shows(&self) -> Result<HashMap<ShowId, TvMazeShowId>, GetShowError> {
+    pub fn get_shows(&self) -> Result<Vec<(ShowId, TvMazeShowId, TvShow)>, GetShowError> {
         let mut statement = self
             .connection
-            .prepare("SELECT id, tvmaze_id FROM shows")
+            .prepare("SELECT * FROM shows")
             .map_err(GetShowError::Prepare)?;
 
-        let mut rows = statement.query(params![]).map_err(GetShowError::Execute)?;
+        let mut rows = statement.query([]).map_err(GetShowError::Execute)?;
+        let mut ret = Vec::new();
 
-        let mut ret = HashMap::new();
-        while let Ok(Some(row)) = rows.next() {
-            let id = ShowId(row.get(0).map_err(GetShowError::GetId)?);
-            let tvmaze_id = TvMazeShowId(row.get(1).map_err(GetShowError::GetTvMazeId)?);
-            ret.insert(id, tvmaze_id);
+        loop {
+            let row = rows.next().map_err(GetShowError::GetRow)?;
+
+            let row = match row {
+                Some(v) => v,
+                None => break,
+            };
+
+            let id = row.get(0).map_err(GetShowError::GetId)?;
+            let id = ShowId(id);
+
+            let name = row.get(1).map_err(GetShowError::GetName)?;
+
+            let tvmaze_id: i64 = row.get(2).map_err(GetShowError::GetTvMazeId)?;
+            let tvmaze_id = TvMazeShowId(tvmaze_id);
+
+            let year = row.get(3).map_err(GetShowError::GetYear)?;
+            let imdb_id: Option<String> = row.get(4).map_err(GetShowError::GetImdbId)?;
+            let imdb_id = imdb_id.map(ImdbShowId);
+
+            let tvdb_id: Option<i64> = row.get(5).map_err(GetShowError::GetTvdbId)?;
+            let tvdb_id = tvdb_id.map(TvdbShowId);
+
+            let image = row.get(6).map_err(GetShowError::GetImageUrl)?;
+            let url = row.get(7).map_err(GetShowError::GetTvMazeUrl)?;
+
+            ret.push((
+                id,
+                tvmaze_id,
+                TvShow {
+                    name,
+                    year,
+                    imdb_id,
+                    tvdb_id,
+                    image,
+                    url,
+                },
+            ));
         }
 
         Ok(ret)
-    }
-
-    pub fn get_show(&self, show: &ShowId) -> Result<TvShow, GetShowError> {
-        let mut statement = self.connection.prepare(
-                "SELECT name, year, imdb_id, tvdb_id, image_url, tvmaze_url FROM shows WHERE id = ?1 ")
-            .map_err(GetShowError::Prepare)?;
-
-        let mut rows = statement.query([show.0]).map_err(GetShowError::Execute)?;
-
-        let row = match rows.next().map_err(GetShowError::GetRow)? {
-            Some(v) => v,
-            None => return Err(GetShowError::ShowNotFound),
-        };
-
-        let name = row.get(0).map_err(GetShowError::GetName)?;
-        let year = row.get(1).map_err(GetShowError::GetYear)?;
-        let imdb_id: Option<String> = row.get(2).map_err(GetShowError::GetImdbId)?;
-        let imdb_id = imdb_id.map(ImdbShowId);
-
-        let tvdb_id: Option<i64> = row.get(3).map_err(GetShowError::GetTvdbId)?;
-        let tvdb_id = tvdb_id.map(TvdbShowId);
-
-        let image = row.get(4).map_err(GetShowError::GetImageUrl)?;
-        let url = row.get(5).map_err(GetShowError::GetTvMazeUrl)?;
-
-        if rows.next().map_err(GetShowError::GetRow)?.is_some() {
-            return Err(GetShowError::TooManyRows);
-        }
-
-        Ok(TvShow {
-            name,
-            year,
-            imdb_id,
-            tvdb_id,
-            image,
-            url,
-        })
     }
 
     fn find_episode(
@@ -470,9 +463,12 @@ mod test {
         let id = db
             .add_show(&show, &TvMazeShowId(0))
             .expect("Failed to add show");
-        let retrieved_show = db.get_show(&id).expect("Failed to get show");
+        let retrieved_shows = db.get_shows().expect("Failed to get show");
 
-        assert_eq!(show, retrieved_show);
+        assert_eq!(retrieved_shows.len(), 1);
+        assert_eq!(retrieved_shows[0].0, id);
+        assert_eq!(retrieved_shows[0].1, TvMazeShowId(0));
+        assert_eq!(retrieved_shows[0].2, show);
     }
 
     #[test]
@@ -491,9 +487,12 @@ mod test {
         let id = db
             .add_show(&show, &TvMazeShowId(0))
             .expect("Failed to add show");
-        let retrieved_show = db.get_show(&id).expect("Failed to get show");
+        let retrieved_shows = db.get_shows().expect("Failed to get show");
 
-        assert_eq!(show, retrieved_show);
+        assert_eq!(retrieved_shows.len(), 1);
+        assert_eq!(retrieved_shows[0].0, id);
+        assert_eq!(retrieved_shows[0].1, TvMazeShowId(0));
+        assert_eq!(retrieved_shows[0].2, show);
     }
 
     #[test]
@@ -526,9 +525,15 @@ mod test {
             .expect("Failed to add show");
 
         let shows = db.get_shows().expect("Failed to get shows");
+        let shows = shows
+            .into_iter()
+            .map(|(id, tvmaze_id, show)| (id, (tvmaze_id, show)))
+            .collect::<HashMap<_, _>>();
         assert_eq!(shows.len(), 2);
-        assert_eq!(shows[&id], TvMazeShowId(0));
-        assert_eq!(shows[&id2], TvMazeShowId(1));
+        assert_eq!(shows[&id].0, TvMazeShowId(0));
+        assert_eq!(shows[&id].1, show);
+        assert_eq!(shows[&id2].0, TvMazeShowId(1));
+        assert_eq!(shows[&id2].1, show2);
     }
 
     #[test]

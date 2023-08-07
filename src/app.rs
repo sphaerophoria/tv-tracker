@@ -46,7 +46,7 @@ impl IndexPoller {
             }
         };
 
-        for (show_id, indexer_id) in monitored_shows.iter() {
+        for (show_id, indexer_id, _) in monitored_shows.iter() {
             let episodes = match tv_maze::episodes(indexer_id) {
                 Ok(v) => v,
                 Err(e) => {
@@ -117,7 +117,7 @@ impl App {
         let mut inner = self.inner.lock().expect("Poisoned lock");
         let existing_shows = inner.db.get_shows().map_err(AddShowError::LoadExisting)?;
 
-        for (_, existing_indexer_id) in existing_shows {
+        for (_, existing_indexer_id, _) in existing_shows {
             if existing_indexer_id == *indexer_show_id {
                 return Err(AddShowError::ShowExists);
             }
@@ -146,12 +146,10 @@ impl App {
 
         let shows = inner.db.get_shows()?;
 
-        let mut ret = HashMap::new();
-        for k in shows.keys() {
-            ret.insert(*k, inner.db.get_show(k)?);
-        }
-
-        Ok(ret)
+        Ok(shows
+            .into_iter()
+            .map(|(show_id, _indexer_id, show)| (show_id, show))
+            .collect())
     }
 
     pub fn episodes(
