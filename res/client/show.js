@@ -79,7 +79,7 @@ function render_show(show, episodes, watch_status) {
         watched_class = "watched";
       }
 
-      ret += "<a href=#/ ";
+      ret += "<a href=javascript:void(0) ";
       ret += 'class="' + aired_class + " " + watched_class + '"';
       ret +=
         ' onclick="set_show_watch_status(' +
