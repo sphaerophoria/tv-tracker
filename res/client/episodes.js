@@ -1,6 +1,14 @@
 "use strict";
 
-import { request_episodes, request_shows } from "./http.js";
+import {
+  request_episodes,
+  request_shows,
+  request_watch_status,
+} from "./http.js";
+
+function sort_shows_by_name(shows) {
+  shows.sort((a, b) => a[1].name.toLowerCase() > b[1].name.toLowerCase());
+}
 
 function get_next_episode(episodes, today) {
   let next = null;
@@ -18,47 +26,85 @@ function get_next_episode(episodes, today) {
   return next;
 }
 
+function render_shows(shows) {
+  sort_shows_by_name(shows);
+
+  let ret = "";
+  for (const item of shows) {
+    let show_id, show;
+    [show_id, show] = item;
+    ret += "<a href=/show.html?show_id=" + show_id + ">";
+    ret += show.name;
+    ret += "</a>";
+    ret += "<br>";
+  }
+  return ret;
+}
+
+function remove_unaired_episodes(episodes, today) {
+  return episodes.filter((episode) => {
+    const show_date = Date.parse(episode.airdate);
+    return show_date < today;
+  });
+}
+
 async function populate_episodes() {
   let shows = await request_shows();
   let show_ids = [];
-  let promises = [];
+  let episode_promises = [];
+  let watch_status_promises = [];
   for (let show_id in shows) {
     show_ids.push(show_id);
-    promises.push(request_episodes(show_id));
+    episode_promises.push(request_episodes(show_id));
+    watch_status_promises.push(request_watch_status(show_id));
   }
 
-  let show_episodes = await Promise.all(promises);
-  let episodes_json = show_ids.map((show_id, idx) => [
-    show_id,
-    show_episodes[idx],
-  ]);
-  episodes_json = new Map(episodes_json);
+  let show_episodes = await Promise.all(episode_promises);
+  let watched_episodes = await Promise.all(watch_status_promises);
 
-  const upcoming_div = document.getElementById("upcoming_episodes");
-  let rendered = "";
+  let next_up_shows = [];
+  let finished_shows = [];
+  let unstarted_shows = [];
+
   const today = Date.now();
-  for (const show_id of episodes_json.keys()) {
-    const episodes = episodes_json.get(show_id);
-    const show_name = shows[show_id].name;
-    const next_episode = get_next_episode(episodes, today);
-    if (next_episode === null) {
-      rendered +=
-        "<li>" + show_name + " has no new episodes scheduled" + "</li>";
-    } else {
-      rendered +=
-        "<li>" +
-        show_name +
-        " S" +
-        next_episode.season +
-        "E" +
-        next_episode.episode +
-        " on " +
-        next_episode.airdate +
-        "</li>";
+
+  for (let i = 0; i < show_ids.length; i++) {
+    const show_id = show_ids[i];
+    const show = shows[show_id];
+    const episodes = show_episodes[i];
+    const watch_statuses = watched_episodes[i];
+
+    const watch_status_keys = Object.keys(watch_statuses);
+    if (watch_status_keys.length == 0) {
+      unstarted_shows.push([show_id, show]);
+      continue;
     }
+
+    if (watch_status_keys.length == Object.keys(episodes).length) {
+      finished_shows.push([show_id, show]);
+      continue;
+    }
+
+    const unaired_episodes = remove_unaired_episodes(
+      Object.values(episodes),
+      today
+    );
+    if (watch_status_keys.length == unaired_episodes.length) {
+      finished_shows.push([show_id, show]);
+      continue;
+    }
+
+    next_up_shows.push([show_id, show]);
   }
 
-  upcoming_div.innerHTML = rendered;
+  const finished_div = document.getElementById("finished");
+  finished_div.innerHTML = render_shows(finished_shows);
+
+  const unstarted_div = document.getElementById("unstarted");
+  unstarted_div.innerHTML = render_shows(unstarted_shows);
+
+  const next_up_div = document.getElementById("next-up");
+  next_up_div.innerHTML = render_shows(next_up_shows);
 }
 
 async function init() {
