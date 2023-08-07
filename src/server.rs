@@ -1,11 +1,16 @@
+use chrono::NaiveDate;
 use serde::Deserialize;
 use tempfile::TempDir;
 use thiserror::Error;
-use tracing::info;
+use tracing::{error, info};
 
 use std::{fs::File, path::Path};
 
-use crate::{app::App, tv_maze::TvMazeShowId, types::ShowId};
+use crate::{
+    app::App,
+    tv_maze::TvMazeShowId,
+    types::{EpisodeId, ShowId},
+};
 
 #[derive(Error, Debug)]
 pub enum ClientExtractionError {
@@ -55,6 +60,31 @@ async fn handle_search(req: tide::Request<App>) -> tide::Result<serde_json::Valu
     Ok(serde_json::to_value(results)?)
 }
 
+#[derive(Deserialize)]
+struct GetWatchStatusParams {
+    show_id: ShowId,
+}
+
+async fn handle_get_watch_status(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let request: GetWatchStatusParams = req.query()?;
+    let app = req.state();
+    let watch_status = app.get_watch_status(&request.show_id)?;
+    Ok(serde_json::to_value(watch_status)?)
+}
+
+#[derive(Debug, Deserialize)]
+struct SetWatchStatusRequest {
+    episode_id: EpisodeId,
+    watch_date: Option<NaiveDate>,
+}
+
+async fn handle_set_watch_status(mut req: tide::Request<App>) -> tide::Result<tide::StatusCode> {
+    let request: SetWatchStatusRequest = req.body_json().await?;
+    let app = req.state();
+    app.set_watch_status(&request.episode_id, request.watch_date)?;
+    Ok(tide::StatusCode::Ok)
+}
+
 #[derive(Debug, Deserialize)]
 struct AddRequest {
     id: TvMazeShowId,
@@ -101,6 +131,9 @@ impl Server {
         app.at("/episodes").get(handle_episodes);
         app.at("/search").get(handle_search);
         app.at("/add_show").put(handle_add);
+        app.at("/watch_status")
+            .get(handle_get_watch_status)
+            .put(handle_set_watch_status);
 
         Ok(Server {
             app,

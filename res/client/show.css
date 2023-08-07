@@ -1,7 +1,11 @@
-.aired {
+.aired.watched {
   color: green
 }
 
-.unaired {
+.aired.unwatched {
   color: red
+}
+
+.unaired {
+  color: yellow
 }

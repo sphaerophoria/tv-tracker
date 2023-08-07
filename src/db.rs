@@ -3,7 +3,7 @@ use crate::{
     types::{EpisodeId, ImdbShowId, ShowId, TvEpisode, TvShow, TvdbShowId},
 };
 
-use chrono::Datelike;
+use chrono::{Datelike, NaiveDate};
 use rusqlite::{params, Connection};
 use thiserror::Error;
 
@@ -96,6 +96,24 @@ pub enum FindEpisodeError {
     InvalidRow(#[source] rusqlite::Error),
     #[error("failed to extract episode id")]
     InvalidEpisodeId(#[source] rusqlite::Error),
+}
+
+#[derive(Debug, Error)]
+#[error("failed to set watch status")]
+pub struct SetWatchStatusError(#[source] rusqlite::Error);
+
+#[derive(Debug, Error)]
+pub enum GetWatchStatusError {
+    #[error("failed to prepare get watch status")]
+    Prepare(#[source] rusqlite::Error),
+    #[error("failed to execute get watch status")]
+    Execute(#[source] rusqlite::Error),
+    #[error("failed to get id of returned row")]
+    GetId(#[source] rusqlite::Error),
+    #[error("failed to get watch date")]
+    GetDate(#[source] rusqlite::Error),
+    #[error("invalid watch date")]
+    InvalidDate,
 }
 
 pub struct Db {
@@ -298,7 +316,7 @@ impl Db {
             let season = row.get(2).map_err(GetEpisodeError::GetSeason)?;
             let episode = row.get(3).map_err(GetEpisodeError::GetEpisode)?;
             let airdate = row.get(4).map_err(GetEpisodeError::GetAirdate)?;
-            let airdate = chrono::NaiveDate::from_num_days_from_ce_opt(airdate)
+            let airdate = NaiveDate::from_num_days_from_ce_opt(airdate)
                 .ok_or(GetEpisodeError::InvalidDate)?;
 
             ret.insert(
@@ -310,6 +328,72 @@ impl Db {
                     airdate,
                 },
             );
+        }
+
+        Ok(ret)
+    }
+
+    pub fn set_episode_watch_status(
+        &mut self,
+        episode: &EpisodeId,
+        watched: Option<NaiveDate>,
+    ) -> Result<(), SetWatchStatusError> {
+        if let Some(date) = watched {
+            self.connection
+                .execute(
+                    "
+                    INSERT OR IGNORE INTO watch_status(episode_id, watch_date)
+                    VALUES (?1, ?2)
+                    ",
+                    params![episode.0, date.num_days_from_ce()],
+                )
+                .map_err(SetWatchStatusError)?;
+        } else {
+            self.connection
+                .execute(
+                    "
+                    DELETE FROM watch_status
+                    WHERE episode_id = ?1
+                    ",
+                    [episode.0],
+                )
+                .map_err(SetWatchStatusError)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_show_watch_status(
+        &self,
+        show: &ShowId,
+    ) -> Result<HashMap<EpisodeId, NaiveDate>, GetWatchStatusError> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "
+                SELECT episode_id, watch_date
+                FROM watch_status
+                LEFT JOIN episodes ON watch_status.episode_id = episodes.id
+                WHERE episodes.show_id = ?1
+                ",
+            )
+            .map_err(GetWatchStatusError::Prepare)?;
+
+        let mut rows = statement
+            .query([show.0])
+            .map_err(GetWatchStatusError::Execute)?;
+
+        let mut ret = HashMap::new();
+
+        while let Ok(Some(row)) = rows.next() {
+            let id = row.get(0).map_err(GetWatchStatusError::GetId)?;
+            let id = EpisodeId(id);
+
+            let date = row.get(1).map_err(GetWatchStatusError::GetDate)?;
+            let date = NaiveDate::from_num_days_from_ce_opt(date)
+                .ok_or(GetWatchStatusError::InvalidDate)?;
+
+            ret.insert(id, date);
         }
 
         Ok(ret)
@@ -349,6 +433,11 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
                 airdate INTEGER NOT NULL,
                 FOREIGN KEY(show_id) REFERENCES shows(id)
 
+            );
+            CREATE TABLE IF NOT EXISTS watch_status(
+                episode_id INTEGER PRIMARY KEY NOT NULL,
+                watch_date INTEGER NOT NULL,
+                FOREIGN KEY(episode_id) REFERENCES episodes(id)
             );
             ",
         )
@@ -457,7 +546,7 @@ mod test {
             name: "Test Episode".to_string(),
             season: 1,
             episode: 34,
-            airdate: chrono::NaiveDate::from_num_days_from_ce_opt(1023).expect("Invalid date"),
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023).expect("Invalid date"),
         };
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
@@ -491,14 +580,14 @@ mod test {
             name: "Test Episode".to_string(),
             season: 1,
             episode: 34,
-            airdate: chrono::NaiveDate::from_num_days_from_ce_opt(1023).expect("Invalid date"),
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023).expect("Invalid date"),
         };
 
         let episode_update = TvEpisode {
             name: "Test Episode updated".to_string(),
             season: 1,
             episode: 34,
-            airdate: chrono::NaiveDate::from_num_days_from_ce_opt(1024).expect("Invalid date"),
+            airdate: NaiveDate::from_num_days_from_ce_opt(1024).expect("Invalid date"),
         };
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
@@ -518,5 +607,65 @@ mod test {
 
         assert_eq!(retrieved_episodes.len(), 1);
         assert_eq!(retrieved_episodes[&id], episode_update);
+    }
+
+    #[test]
+    fn test_set_watch_status() {
+        let show = TvShow {
+            name: "Test Show".to_string(),
+            image: None,
+            year: None,
+            url: None,
+            imdb_id: None,
+            tvdb_id: None,
+        };
+
+        let episode = TvEpisode {
+            name: "Test Episode".to_string(),
+            season: 1,
+            episode: 34,
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023).expect("Invalid date"),
+        };
+
+        let episode2 = TvEpisode {
+            name: "Test Episode 2".to_string(),
+            season: 1,
+            episode: 35,
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023).expect("Invalid date"),
+        };
+
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+
+        let show_id = db
+            .add_show(&show, &TvMazeShowId(0))
+            .expect("Failed to add show");
+
+        let episode_id = db
+            .add_episode(&show_id, &episode)
+            .expect("Failed to add episode");
+
+        db.add_episode(&show_id, &episode2)
+            .expect("Failed to add episode");
+
+        let watch_date = NaiveDate::from_num_days_from_ce_opt(1024).expect("Invalid date");
+
+        db.set_episode_watch_status(&episode_id, Some(watch_date))
+            .expect("Failed to set watch status");
+
+        let retrieved_episodes = db
+            .get_show_watch_status(&show_id)
+            .expect("Failed to get episodes");
+
+        assert_eq!(retrieved_episodes.len(), 1);
+        assert_eq!(retrieved_episodes[&episode_id], watch_date);
+
+        db.set_episode_watch_status(&episode_id, None)
+            .expect("Failed to set watch status");
+
+        let retrieved_episodes = db
+            .get_show_watch_status(&show_id)
+            .expect("Failed to get episodes");
+
+        assert_eq!(retrieved_episodes.len(), 0);
     }
 }

@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{error, info};
@@ -164,5 +165,22 @@ impl App {
     pub fn search(&self, query: &str) -> Result<Vec<TvMazeShow>, TvMazeApiError> {
         let results = tv_maze::search(query)?;
         Ok(results)
+    }
+
+    pub fn set_watch_status(
+        &self,
+        episode: &EpisodeId,
+        status: Option<NaiveDate>,
+    ) -> Result<(), db::SetWatchStatusError> {
+        let mut inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.set_episode_watch_status(episode, status)
+    }
+
+    pub fn get_watch_status(
+        &self,
+        show_id: &ShowId,
+    ) -> Result<HashMap<EpisodeId, NaiveDate>, db::GetWatchStatusError> {
+        let inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.get_show_watch_status(show_id)
     }
 }
