@@ -1,10 +1,6 @@
 "use strict";
 
-import {
-  request_episodes,
-  request_shows,
-  request_watch_status,
-} from "./http.js";
+import { request_shows, request_shows_by_watch_status } from "./http.js";
 
 function sort_shows_by_name(shows) {
   shows.sort((a, b) => a[1].name.toLowerCase() > b[1].name.toLowerCase());
@@ -49,52 +45,32 @@ function remove_unaired_episodes(episodes, today) {
 }
 
 async function populate_episodes() {
-  let shows = await request_shows();
-  let show_ids = [];
-  let episode_promises = [];
-  let watch_status_promises = [];
-  for (let show_id in shows) {
-    show_ids.push(show_id);
-    episode_promises.push(request_episodes(show_id));
-    watch_status_promises.push(request_watch_status(show_id));
-  }
+  let shows_promise = request_shows();
+  let show_statuses_promise = request_shows_by_watch_status();
 
-  let show_episodes = await Promise.all(episode_promises);
-  let watched_episodes = await Promise.all(watch_status_promises);
+  let shows, show_statuses;
+  [shows, show_statuses] = await Promise.all([
+    shows_promise,
+    show_statuses_promise,
+  ]);
 
   let next_up_shows = [];
   let finished_shows = [];
   let unstarted_shows = [];
 
-  const today = Date.now();
-
-  for (let i = 0; i < show_ids.length; i++) {
-    const show_id = show_ids[i];
+  for (const show_id in shows) {
     const show = shows[show_id];
-    const episodes = show_episodes[i];
-    const watch_statuses = watched_episodes[i];
+    const show_status = show_statuses[show_id];
 
-    const watch_status_keys = Object.keys(watch_statuses);
-    if (watch_status_keys.length == 0) {
+    if (show_status == "finished") {
+      finished_shows.push([show_id, show]);
+    } else if (show_status == "in_progress") {
+      next_up_shows.push([show_id, show]);
+    } else if (show_status == "unstarted") {
       unstarted_shows.push([show_id, show]);
-      continue;
+    } else {
+      throw new Error("Invalid show status " + show_status);
     }
-
-    if (watch_status_keys.length == Object.keys(episodes).length) {
-      finished_shows.push([show_id, show]);
-      continue;
-    }
-
-    const unaired_episodes = remove_unaired_episodes(
-      Object.values(episodes),
-      today
-    );
-    if (watch_status_keys.length == unaired_episodes.length) {
-      finished_shows.push([show_id, show]);
-      continue;
-    }
-
-    next_up_shows.push([show_id, show]);
   }
 
   const finished_div = document.getElementById("finished");

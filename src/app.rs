@@ -29,6 +29,16 @@ pub enum AddShowError {
     AddShowToDb(#[source] DbAddShowError),
 }
 
+#[derive(Debug, Error)]
+pub enum GetShowWatchStatusError {
+    #[error("failed to get shows")]
+    Shows(#[source] db::GetShowError),
+    #[error("failed to get episodes")]
+    Episodes(#[source] db::GetEpisodeError),
+    #[error("failed to get watch_statuses")]
+    WatchStatus(#[source] db::GetWatchStatusError),
+}
+
 struct IndexPoller {
     inner: SharedInner,
 }
@@ -77,6 +87,14 @@ impl IndexPoller {
             std::thread::sleep(Duration::from_secs(DAY_IN_SECONDS));
         }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowWatchStatus {
+    Finished,
+    Unstarted,
+    InProgress,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -180,5 +198,47 @@ impl App {
     ) -> Result<HashMap<EpisodeId, NaiveDate>, db::GetWatchStatusError> {
         let inner = self.inner.lock().expect("Poisoned lock");
         inner.db.get_show_watch_status(show_id)
+    }
+
+    pub fn get_shows_by_watch_status(
+        &self,
+    ) -> Result<HashMap<ShowId, ShowWatchStatus>, GetShowWatchStatusError> {
+        let inner = self.inner.lock().expect("Poisoned lock");
+        let mut ret = HashMap::new();
+        let today = chrono::Local::now().date_naive();
+
+        for (show_id, _, _) in inner
+            .db
+            .get_shows()
+            .map_err(GetShowWatchStatusError::Shows)?
+        {
+            let watch_status = inner
+                .db
+                .get_show_watch_status(&show_id)
+                .map_err(GetShowWatchStatusError::WatchStatus)?;
+
+            if watch_status.is_empty() {
+                ret.insert(show_id, ShowWatchStatus::Unstarted);
+                continue;
+            }
+
+            let episodes = inner
+                .db
+                .get_episodes(&show_id)
+                .map_err(GetShowWatchStatusError::Episodes)?;
+            let aired_episodes: Vec<_> = episodes
+                .into_iter()
+                .filter(|(_id, epi)| epi.airdate <= today)
+                .collect();
+
+            if watch_status.len() >= aired_episodes.len() {
+                ret.insert(show_id, ShowWatchStatus::Finished);
+                continue;
+            }
+
+            ret.insert(show_id, ShowWatchStatus::InProgress);
+        }
+
+        Ok(ret)
     }
 }

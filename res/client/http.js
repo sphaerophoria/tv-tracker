@@ -15,6 +15,14 @@ export async function request_shows() {
   return await response.json();
 }
 
+export async function request_shows_by_watch_status() {
+  const request = new Request("/shows_by_watch_status", {
+    method: "GET",
+  });
+  const response = await fetch(request);
+  return await response.json();
+}
+
 export async function request_watch_status(show_id) {
   const params = new URLSearchParams({ show_id: show_id });
   const request = new Request("/watch_status?" + params.toString(), {

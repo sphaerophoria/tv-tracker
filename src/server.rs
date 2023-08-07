@@ -72,6 +72,14 @@ async fn handle_get_watch_status(req: tide::Request<App>) -> tide::Result<serde_
     Ok(serde_json::to_value(watch_status)?)
 }
 
+async fn handle_get_shows_by_watch_status(
+    req: tide::Request<App>,
+) -> tide::Result<serde_json::Value> {
+    let app = req.state();
+    let watch_status = app.get_shows_by_watch_status()?;
+    Ok(serde_json::to_value(watch_status)?)
+}
+
 #[derive(Debug, Deserialize)]
 struct SetWatchStatusRequest {
     episode_id: EpisodeId,
@@ -134,6 +142,8 @@ impl Server {
         app.at("/watch_status")
             .get(handle_get_watch_status)
             .put(handle_set_watch_status);
+        app.at("/shows_by_watch_status")
+            .get(handle_get_shows_by_watch_status);
 
         Ok(Server {
             app,
