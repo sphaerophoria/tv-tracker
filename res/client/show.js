@@ -41,11 +41,28 @@ async function set_show_watch_status(episode_id, watched) {
   init();
 }
 
+async function mark_aired_watched(episodes) {
+  const now = new Date(Date.now());
+  let date_string = now.toISOString().substring(0, 10);
+  for (const episode_id in episodes) {
+    const episode = episodes[episode_id];
+    if (now > Date.parse(episode.airdate)) {
+      await request_set_watch_status(parseInt(episode_id), date_string);
+    }
+  }
+  init();
+}
+
+async function mark_all_unwatched(episodes) {
+  for (const episode_id in episodes) {
+    await request_set_watch_status(parseInt(episode_id), null);
+  }
+  init();
+}
+
 function render_show(show, episodes, watch_status) {
-  let ret = "<h1>" + show.name + "</h1>";
-
+  let ret = "";
   let season_episodes = group_episodes_by_seasons(episodes);
-
   let today = Date.now();
 
   for (const [season, episodes] of season_episodes) {
@@ -62,7 +79,6 @@ function render_show(show, episodes, watch_status) {
         watched_class = "watched";
       }
 
-      console.log(episode_id);
       ret += "<a href=#/ ";
       ret += 'class="' + aired_class + " " + watched_class + '"';
       ret +=
@@ -102,14 +118,22 @@ async function init() {
     episodes_promise,
     watch_status_promise,
   ]);
-  console.log(watch_status_json);
 
-  const show_div = document.getElementById("show");
+  const title_node = document.getElementById("show-title");
+  title_node.innerHTML = "<h1>" + shows_json[show_id].name + "</h1>";
+
+  const show_div = document.getElementById("show-seasons");
   show_div.innerHTML = render_show(
     shows_json[show_id],
     episodes_json,
     watch_status_json
   );
+
+  const mark_watched_button = document.getElementById("mark-all-watched");
+  mark_watched_button.onclick = () => mark_aired_watched(episodes_json);
+
+  const mark_unwatched_button = document.getElementById("mark-all-unwatched");
+  mark_unwatched_button.onclick = () => mark_all_unwatched(episodes_json);
 }
 
 init();

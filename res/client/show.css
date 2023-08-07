@@ -1,4 +1,4 @@
-.aired.watched {
+.watched {
   color: green
 }
 
@@ -8,4 +8,8 @@
 
 .unaired {
   color: yellow
+}
+
+#watch-buttons {
+  display: flex
 }
