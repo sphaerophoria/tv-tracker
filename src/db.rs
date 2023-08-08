@@ -7,7 +7,10 @@ use chrono::{Datelike, NaiveDate};
 use rusqlite::{params, Connection};
 use thiserror::Error;
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 #[derive(Debug, Error)]
 pub enum DbCreationError {
@@ -21,6 +24,10 @@ pub enum DbCreationError {
     CommitTransaction(#[source] rusqlite::Error),
     #[error("failed to create show table")]
     CreateShowTable(#[source] rusqlite::Error),
+    #[error("failed to upgrade episodes table to v2")]
+    UpgradeEpisodesTalbeV2(#[source] rusqlite::Error),
+    #[error("failed to create paused show table")]
+    CreatePausedShows(#[source] rusqlite::Error),
 }
 
 #[derive(Debug, Error)]
@@ -114,6 +121,19 @@ pub enum GetWatchStatusError {
     InvalidDate,
 }
 
+#[derive(Debug, Error)]
+#[error("failed to set pause status")]
+pub struct SetPauseError(#[source] rusqlite::Error);
+
+#[derive(Debug, Error)]
+pub enum GetPausedShowError {
+    #[error("failed to prepare pause statement")]
+    Prepare(#[source] rusqlite::Error),
+    #[error("failed to execute pause statement")]
+    Execute(#[source] rusqlite::Error),
+    #[error("failed to parse show id")]
+    Parse(#[source] rusqlite::Error),
+}
 pub struct Db {
     connection: Connection,
 }
@@ -397,6 +417,47 @@ impl Db {
 
         Ok(ret)
     }
+
+    pub fn set_pause_status(&self, show: &ShowId, paused: bool) -> Result<(), SetPauseError> {
+        if paused {
+            self.connection
+                .execute(
+                    "
+                    INSERT OR IGNORE INTO paused_shows(show_id)
+                    VALUES (?1)
+                    ",
+                    params![show.0],
+                )
+                .map_err(SetPauseError)?;
+        } else {
+            self.connection
+                .execute(
+                    "
+                    DELETE FROM paused_shows WHERE show_id = ?1
+                    ",
+                    params![show.0],
+                )
+                .map_err(SetPauseError)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_paused_shows(&self) -> Result<HashSet<ShowId>, GetPausedShowError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT show_id FROM paused_shows")
+            .map_err(GetPausedShowError::Prepare)?;
+
+        let mut rows = statement.query([]).map_err(GetPausedShowError::Execute)?;
+
+        let mut ret = HashSet::new();
+        while let Ok(Some(row)) = rows.next() {
+            ret.insert(ShowId(row.get(0).map_err(GetPausedShowError::Parse)?));
+        }
+
+        Ok(ret)
+    }
 }
 
 fn initialize_v1_db(connection: &mut Connection) -> Result<(), DbCreationError> {
@@ -473,7 +534,31 @@ fn upgrade_v1_v2(connection: &mut Connection) -> Result<(), DbCreationError> {
             PRAGMA user_version = 2;
             ",
         )
-        .map_err(DbCreationError::CreateShowTable)?;
+        .map_err(DbCreationError::UpgradeEpisodesTalbeV2)?;
+
+    transaction
+        .commit()
+        .map_err(DbCreationError::CommitTransaction)?;
+
+    Ok(())
+}
+
+fn upgrade_v2_v3(connection: &mut Connection) -> Result<(), DbCreationError> {
+    let transaction = connection
+        .transaction()
+        .map_err(DbCreationError::StartTransaction)?;
+
+    transaction
+        .execute_batch(
+            "
+            CREATE TABLE paused_shows(
+                show_id INTEGER PRIMARY KEY NOT NULL,
+                FOREIGN KEY(show_id) REFERENCES shows(id)
+            );
+            PRAGMA user_version = 3;
+            ",
+        )
+        .map_err(DbCreationError::CreatePausedShows)?;
 
     transaction
         .commit()
@@ -487,7 +572,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(DbCreationError::GetVersion)?;
 
-    let upgrade_functions = [initialize_v1_db, upgrade_v1_v2];
+    let upgrade_functions = [initialize_v1_db, upgrade_v1_v2, upgrade_v2_v3];
 
     for f in upgrade_functions.iter().skip(version) {
         f(connection)?;
@@ -496,7 +581,8 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
     let version: usize = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(DbCreationError::GetVersion)?;
-    assert_eq!(version, 2);
+
+    assert_eq!(version, 3);
 
     Ok(())
 }
@@ -730,5 +816,49 @@ mod test {
             .expect("Failed to get episodes");
 
         assert_eq!(retrieved_episodes.len(), 0);
+    }
+
+    #[test]
+    fn test_set_pause_status() {
+        let show = TvShow {
+            name: "Test Show".to_string(),
+            image: None,
+            year: None,
+            url: None,
+            imdb_id: None,
+            tvdb_id: None,
+        };
+
+        let show2 = TvShow {
+            name: "Test Show 2".to_string(),
+            image: None,
+            year: None,
+            url: None,
+            imdb_id: None,
+            tvdb_id: None,
+        };
+
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+
+        let id = db
+            .add_show(&show, &TvMazeShowId(0))
+            .expect("Failed to add show");
+        db.add_show(&show2, &TvMazeShowId(1))
+            .expect("Failed to add show");
+
+        db.set_pause_status(&id, false)
+            .expect("Failed to set pause");
+        let paused = db.get_paused_shows().expect("Failed to get shows");
+        assert_eq!(paused.len(), 0);
+
+        db.set_pause_status(&id, true).expect("Failed to set pause");
+        let paused = db.get_paused_shows().expect("Failed to get shows");
+        assert_eq!(paused.len(), 1);
+        assert!(paused.contains(&id));
+
+        db.set_pause_status(&id, false)
+            .expect("Failed to set pause");
+        let paused = db.get_paused_shows().expect("Failed to get shows");
+        assert_eq!(paused.len(), 0);
     }
 }

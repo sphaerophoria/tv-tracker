@@ -107,6 +107,27 @@ async fn handle_add(mut req: tide::Request<App>) -> tide::Result<tide::StatusCod
     Ok(tide::StatusCode::Ok)
 }
 
+async fn handle_get_pause_status(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let app = req.state();
+    let show_pause_status = app.get_paused_shows()?;
+    Ok(serde_json::to_value(show_pause_status)?)
+}
+
+#[derive(Debug, Deserialize)]
+struct SetShowPauseStatusRequest {
+    show_id: ShowId,
+    paused: bool,
+}
+
+async fn handle_set_show_pause_status(
+    mut req: tide::Request<App>,
+) -> tide::Result<tide::StatusCode> {
+    let request: SetShowPauseStatusRequest = req.body_json().await?;
+    let app = req.state();
+    app.set_show_pause_status(&request.show_id, request.paused)?;
+    Ok(tide::StatusCode::Ok)
+}
+
 #[derive(Error, Debug)]
 pub enum ServerCreationError {
     #[error("failed to extract client")]
@@ -146,6 +167,9 @@ impl Server {
             .put(handle_set_watch_status);
         app.at("/shows_by_watch_status")
             .get(handle_get_shows_by_watch_status);
+        app.at("/pause_status")
+            .get(handle_get_pause_status)
+            .put(handle_set_show_pause_status);
 
         Ok(Server {
             app,

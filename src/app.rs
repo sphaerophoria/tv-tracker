@@ -4,7 +4,7 @@ use thiserror::Error;
 use tracing::{error, info};
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -247,5 +247,19 @@ impl App {
         }
 
         Ok(ret)
+    }
+
+    pub fn set_show_pause_status(
+        &self,
+        show: &ShowId,
+        pause: bool,
+    ) -> Result<(), db::SetPauseError> {
+        let inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.set_pause_status(show, pause)
+    }
+
+    pub fn get_paused_shows(&self) -> Result<HashSet<ShowId>, db::GetPausedShowError> {
+        let inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.get_paused_shows()
     }
 }

@@ -5,6 +5,8 @@ import {
   request_shows,
   request_watch_status,
   request_set_watch_status,
+  request_paused_shows,
+  request_set_pause_status,
 } from "./http.js";
 
 function page_show_id() {
@@ -60,6 +62,11 @@ async function mark_all_unwatched(episodes) {
   init();
 }
 
+async function pause_show(show_id, pause_state) {
+  await request_set_pause_status(show_id, pause_state);
+  init();
+}
+
 function render_show(show, episodes, watch_status) {
   let ret = "";
   let season_episodes = group_episodes_by_seasons(episodes);
@@ -110,18 +117,21 @@ function render_show(show, episodes, watch_status) {
 async function init() {
   window.set_show_watch_status = set_show_watch_status;
 
-  const show_id = page_show_id();
+  const show_id = parseInt(page_show_id());
 
   const shows_promise = request_shows();
   const episodes_promise = request_episodes(show_id);
   const watch_status_promise = request_watch_status(show_id);
+  const paused_shows_promise = request_paused_shows();
 
-  let shows_json, episodes_json, watch_status_json;
-  [shows_json, episodes_json, watch_status_json] = await Promise.all([
-    shows_promise,
-    episodes_promise,
-    watch_status_promise,
-  ]);
+  let shows_json, episodes_json, watch_status_json, paused_shows;
+  [shows_json, episodes_json, watch_status_json, paused_shows] =
+    await Promise.all([
+      shows_promise,
+      episodes_promise,
+      watch_status_promise,
+      paused_shows_promise,
+    ]);
 
   const title_node = document.getElementById("show-title");
   title_node.innerHTML = "<h1>" + shows_json[show_id].name + "</h1>";
@@ -138,6 +148,17 @@ async function init() {
 
   const mark_unwatched_button = document.getElementById("mark-all-unwatched");
   mark_unwatched_button.onclick = () => mark_all_unwatched(episodes_json);
+
+  const set_pause_button = document.getElementById("pause");
+
+  console.log(paused_shows);
+  const show_paused = paused_shows.includes(show_id);
+  if (show_paused) {
+    set_pause_button.value = "Unpause show";
+  } else {
+    set_pause_button.value = "Pause show";
+  }
+  set_pause_button.onclick = () => pause_show(show_id, !show_paused);
 }
 
 init();

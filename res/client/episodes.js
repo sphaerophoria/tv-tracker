@@ -1,6 +1,10 @@
 "use strict";
 
-import { request_shows, request_shows_by_watch_status } from "./http.js";
+import {
+  request_shows,
+  request_shows_by_watch_status,
+  request_paused_shows,
+} from "./http.js";
 
 function sort_shows_by_name(shows) {
   shows.sort((a, b) => a[1].name.toLowerCase() > b[1].name.toLowerCase());
@@ -24,22 +28,28 @@ function render_shows(shows) {
 async function populate_episodes() {
   let shows_promise = request_shows();
   let show_statuses_promise = request_shows_by_watch_status();
+  let paused_shows_promise = request_paused_shows();
 
-  let shows, show_statuses;
-  [shows, show_statuses] = await Promise.all([
+  let shows, show_statuses, paused_show_ids;
+  [shows, show_statuses, paused_show_ids] = await Promise.all([
     shows_promise,
     show_statuses_promise,
+    paused_shows_promise,
   ]);
 
   let next_up_shows = [];
   let finished_shows = [];
   let unstarted_shows = [];
+  let paused_shows = [];
+  console.log(paused_show_ids);
 
   for (const show_id in shows) {
     const show = shows[show_id];
     const show_status = show_statuses[show_id];
 
-    if (show_status == "finished") {
+    if (paused_show_ids.includes(parseInt(show_id))) {
+      paused_shows.push([show_id, show]);
+    } else if (show_status == "finished") {
       finished_shows.push([show_id, show]);
     } else if (show_status == "in_progress") {
       next_up_shows.push([show_id, show]);
@@ -58,6 +68,10 @@ async function populate_episodes() {
 
   const next_up_div = document.getElementById("next-up");
   next_up_div.innerHTML = render_shows(next_up_shows);
+
+  console.log(paused_shows);
+  const paused_div = document.getElementById("paused");
+  paused_div.innerHTML = render_shows(paused_shows);
 }
 
 async function init() {

@@ -42,3 +42,22 @@ export async function request_set_watch_status(episode_id, watch_date) {
   });
   return await fetch(request);
 }
+
+export async function request_paused_shows() {
+  const request = new Request("/pause_status", {
+    method: "GET",
+  });
+  const response = await fetch(request);
+  return await response.json();
+}
+
+export async function request_set_pause_status(show_id, pause_status) {
+  const request = new Request("/pause_status", {
+    method: "PUT",
+    body: JSON.stringify({
+      show_id: show_id,
+      paused: pause_status,
+    }),
+  });
+  return await fetch(request);
+}
