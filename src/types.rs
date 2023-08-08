@@ -21,7 +21,7 @@ pub struct TvEpisode {
     pub name: String,
     pub season: i64,
     pub episode: i64,
-    pub airdate: chrono::NaiveDate,
+    pub airdate: Option<chrono::NaiveDate>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]

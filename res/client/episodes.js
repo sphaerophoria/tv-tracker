@@ -6,22 +6,6 @@ function sort_shows_by_name(shows) {
   shows.sort((a, b) => a[1].name.toLowerCase() > b[1].name.toLowerCase());
 }
 
-function get_next_episode(episodes, today) {
-  let next = null;
-  let next_date = null;
-
-  for (const i in episodes) {
-    const this_date = Date.parse(episodes[i].airdate);
-
-    if (today < this_date && (next_date === null || next_date > this_date)) {
-      next = episodes[i];
-      next_date = this_date;
-    }
-  }
-
-  return next;
-}
-
 function render_shows(shows) {
   sort_shows_by_name(shows);
 
@@ -35,13 +19,6 @@ function render_shows(shows) {
     ret += "<br>";
   }
   return ret;
-}
-
-function remove_unaired_episodes(episodes, today) {
-  return episodes.filter((episode) => {
-    const show_date = Date.parse(episode.airdate);
-    return show_date < today;
-  });
 }
 
 async function populate_episodes() {

@@ -69,7 +69,7 @@ function render_show(show, episodes, watch_status) {
     ret += "<h2>Season " + season + "</h2>";
     for (let [episode_id, episode] of episodes) {
       let aired_class = "unaired";
-      if (Date.parse(episode.airdate) < today) {
+      if (episode.airdate !== null && Date.parse(episode.airdate) < today) {
         aired_class = "aired";
       }
 
@@ -89,7 +89,11 @@ function render_show(show, episodes, watch_status) {
         ')" ';
       ret += ">";
 
-      ret += " " + episode.airdate;
+      if (episode.airdate !== null) {
+        ret += " " + episode.airdate;
+      } else {
+        ret += " TBD";
+      }
       ret += " Episode " + episode.episode;
       ret += ": ";
 

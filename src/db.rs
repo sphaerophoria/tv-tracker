@@ -13,6 +13,8 @@ use std::{collections::HashMap, path::Path};
 pub enum DbCreationError {
     #[error("failed to open sqlite db")]
     OpenDb(#[source] rusqlite::Error),
+    #[error("failed to get current version")]
+    GetVersion(#[source] rusqlite::Error),
     #[error("failed to start transaction")]
     StartTransaction(#[source] rusqlite::Error),
     #[error("failed to commit transaction")]
@@ -258,7 +260,7 @@ impl Db {
                         episode.name,
                         episode.season,
                         episode.episode,
-                        episode.airdate.num_days_from_ce()
+                        episode.airdate.map(|v| v.num_days_from_ce())
                     ],
                 )
                 .map_err(AddEpisodeError::UpdateEpisode)?;
@@ -276,7 +278,7 @@ impl Db {
                         episode.name,
                         episode.season,
                         episode.episode,
-                        episode.airdate.num_days_from_ce()
+                        episode.airdate.map(|v| v.num_days_from_ce())
                     ],
                 )
                 .map_err(AddEpisodeError::InsertEpisode)?;
@@ -308,9 +310,13 @@ impl Db {
 
             let season = row.get(2).map_err(GetEpisodeError::GetSeason)?;
             let episode = row.get(3).map_err(GetEpisodeError::GetEpisode)?;
-            let airdate = row.get(4).map_err(GetEpisodeError::GetAirdate)?;
-            let airdate = NaiveDate::from_num_days_from_ce_opt(airdate)
-                .ok_or(GetEpisodeError::InvalidDate)?;
+            let airdate: Option<i32> = row.get(4).map_err(GetEpisodeError::GetAirdate)?;
+            let airdate = match airdate {
+                Some(v) => Some(
+                    NaiveDate::from_num_days_from_ce_opt(v).ok_or(GetEpisodeError::InvalidDate)?,
+                ),
+                None => None,
+            };
 
             ret.insert(
                 id,
@@ -393,7 +399,7 @@ impl Db {
     }
 }
 
-fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationError> {
+fn initialize_v1_db(connection: &mut Connection) -> Result<(), DbCreationError> {
     let transaction = connection
         .transaction()
         .map_err(DbCreationError::StartTransaction)?;
@@ -432,6 +438,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
                 watch_date INTEGER NOT NULL,
                 FOREIGN KEY(episode_id) REFERENCES episodes(id)
             );
+            PRAGMA user_version = 1;
             ",
         )
         .map_err(DbCreationError::CreateShowTable)?;
@@ -439,6 +446,57 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
     transaction
         .commit()
         .map_err(DbCreationError::CommitTransaction)?;
+
+    Ok(())
+}
+
+fn upgrade_v1_v2(connection: &mut Connection) -> Result<(), DbCreationError> {
+    let transaction = connection
+        .transaction()
+        .map_err(DbCreationError::StartTransaction)?;
+
+    transaction
+        .execute_batch(
+            "
+            CREATE TABLE new_episodes(
+                id INTEGER PRIMARY KEY NOT NULL,
+                show_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                season INTEGER NOT NULL,
+                episode INTEGER NOT NULL,
+                airdate INTEGER,
+                FOREIGN KEY(show_id) REFERENCES shows(id)
+            );
+            INSERT INTO new_episodes SELECT id, show_id, name, season, episode, airdate from episodes;
+            DROP TABLE episodes;
+            ALTER TABLE new_episodes RENAME TO episodes;
+            PRAGMA user_version = 2;
+            ",
+        )
+        .map_err(DbCreationError::CreateShowTable)?;
+
+    transaction
+        .commit()
+        .map_err(DbCreationError::CommitTransaction)?;
+
+    Ok(())
+}
+
+fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationError> {
+    let version: usize = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(DbCreationError::GetVersion)?;
+
+    let upgrade_functions = [initialize_v1_db, upgrade_v1_v2];
+
+    for f in upgrade_functions.iter().skip(version) {
+        f(connection)?;
+    }
+
+    let version: usize = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(DbCreationError::GetVersion)?;
+    assert_eq!(version, 2);
 
     Ok(())
 }
@@ -551,7 +609,7 @@ mod test {
             name: "Test Episode".to_string(),
             season: 1,
             episode: 34,
-            airdate: NaiveDate::from_num_days_from_ce_opt(1023).expect("Invalid date"),
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023),
         };
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
@@ -585,14 +643,14 @@ mod test {
             name: "Test Episode".to_string(),
             season: 1,
             episode: 34,
-            airdate: NaiveDate::from_num_days_from_ce_opt(1023).expect("Invalid date"),
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023),
         };
 
         let episode_update = TvEpisode {
             name: "Test Episode updated".to_string(),
             season: 1,
             episode: 34,
-            airdate: NaiveDate::from_num_days_from_ce_opt(1024).expect("Invalid date"),
+            airdate: NaiveDate::from_num_days_from_ce_opt(1024),
         };
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
@@ -629,14 +687,14 @@ mod test {
             name: "Test Episode".to_string(),
             season: 1,
             episode: 34,
-            airdate: NaiveDate::from_num_days_from_ce_opt(1023).expect("Invalid date"),
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023),
         };
 
         let episode2 = TvEpisode {
             name: "Test Episode 2".to_string(),
             season: 1,
             episode: 35,
-            airdate: NaiveDate::from_num_days_from_ce_opt(1023).expect("Invalid date"),
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023),
         };
 
         let mut db = Db::new_in_memory().expect("Failed to create db");

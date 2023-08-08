@@ -1,4 +1,4 @@
-use chrono::Datelike;
+use chrono::{Datelike, NaiveDate};
 use isahc::error::Error as IsahcError;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
@@ -80,16 +80,17 @@ struct ApiEpisode {
     name: String,
     season: i64,
     number: i64,
-    airdate: chrono::NaiveDate,
+    airdate: String,
 }
 
 impl From<ApiEpisode> for TvEpisode {
     fn from(value: ApiEpisode) -> Self {
+        let airdate = NaiveDate::parse_from_str(&value.airdate, "%Y-%m-%d").ok();
         TvEpisode {
             name: value.name,
             season: value.season,
             episode: value.number,
-            airdate: value.airdate,
+            airdate,
         }
     }
 }
@@ -149,6 +150,9 @@ mod test {
     #[test]
     fn test_episodes_deserialization() {
         let body = include_bytes!("../res/tv_maze/episodes_result.json");
+        serde_json::from_slice::<Vec<ApiEpisode>>(body).expect("Failed to deserialize");
+
+        let body = include_bytes!("../res/tv_maze/episodes_resident_alien.json");
         serde_json::from_slice::<Vec<ApiEpisode>>(body).expect("Failed to deserialize");
     }
 }

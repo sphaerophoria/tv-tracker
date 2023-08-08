@@ -226,9 +226,16 @@ impl App {
                 .db
                 .get_episodes(&show_id)
                 .map_err(GetShowWatchStatusError::Episodes)?;
+
             let aired_episodes: Vec<_> = episodes
                 .into_iter()
-                .filter(|(_id, epi)| epi.airdate <= today)
+                .filter(|(_id, epi)| {
+                    let airdate = match epi.airdate {
+                        Some(v) => v,
+                        None => return false,
+                    };
+                    airdate <= today
+                })
                 .collect();
 
             if watch_status.len() >= aired_episodes.len() {

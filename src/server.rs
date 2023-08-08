@@ -101,7 +101,9 @@ struct AddRequest {
 async fn handle_add(mut req: tide::Request<App>) -> tide::Result<tide::StatusCode> {
     let request: AddRequest = req.body_json().await?;
     let app = req.state();
-    app.add_show(&request.id)?;
+    if let Err(e) = app.add_show(&request.id) {
+        println!("{:?}", e);
+    }
     Ok(tide::StatusCode::Ok)
 }
 
