@@ -41,7 +41,6 @@ async function populate_episodes() {
   let finished_shows = [];
   let unstarted_shows = [];
   let paused_shows = [];
-  console.log(paused_show_ids);
 
   for (const show_id in shows) {
     const show = shows[show_id];
@@ -69,7 +68,6 @@ async function populate_episodes() {
   const next_up_div = document.getElementById("next-up");
   next_up_div.innerHTML = render_shows(next_up_shows);
 
-  console.log(paused_shows);
   const paused_div = document.getElementById("paused");
   paused_div.innerHTML = render_shows(paused_shows);
 }

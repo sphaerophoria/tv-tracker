@@ -157,7 +157,6 @@ async function init() {
 
   const set_pause_button = document.getElementById("pause");
 
-  console.log(paused_shows);
   const show_paused = paused_shows.includes(show_id);
   if (show_paused) {
     set_pause_button.value = "Unpause show";
