@@ -159,6 +159,11 @@ impl App {
         Ok(())
     }
 
+    pub fn remove_show(&self, show_id: &ShowId) -> Result<(), db::RemoveShowError> {
+        let mut inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.remove_show(show_id)
+    }
+
     pub fn shows(&self) -> Result<HashMap<ShowId, TvShow>, GetShowError> {
         let inner = self.inner.lock().expect("Poisoned lock");
 

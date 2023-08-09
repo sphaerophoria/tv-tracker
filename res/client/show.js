@@ -7,6 +7,7 @@ import {
   request_set_watch_status,
   request_paused_shows,
   request_set_pause_status,
+  request_remove_show,
 } from "./http.js";
 
 function page_show_id() {
@@ -65,6 +66,11 @@ async function mark_all_unwatched(episodes) {
 async function pause_show(show_id, pause_state) {
   await request_set_pause_status(show_id, pause_state);
   init();
+}
+
+async function remove_show(show_id) {
+  await request_remove_show(show_id);
+  window.location.href = "/shows.html";
 }
 
 function render_show(show, episodes, watch_status) {
@@ -159,6 +165,9 @@ async function init() {
     set_pause_button.value = "Pause show";
   }
   set_pause_button.onclick = () => pause_show(show_id, !show_paused);
+
+  const remove_show_button = document.getElementById("remove-show");
+  remove_show_button.onclick = () => remove_show(show_id);
 }
 
 init();

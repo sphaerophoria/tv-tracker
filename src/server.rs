@@ -107,6 +107,18 @@ async fn handle_add(mut req: tide::Request<App>) -> tide::Result<tide::StatusCod
     Ok(tide::StatusCode::Ok)
 }
 
+#[derive(Debug, Deserialize)]
+struct RemoveRequest {
+    show_id: ShowId,
+}
+
+async fn handle_remove(mut req: tide::Request<App>) -> tide::Result<tide::StatusCode> {
+    let request: RemoveRequest = req.body_json().await?;
+    let app = req.state();
+    app.remove_show(&request.show_id)?;
+    Ok(tide::StatusCode::Ok)
+}
+
 async fn handle_get_pause_status(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
     let app = req.state();
     let show_pause_status = app.get_paused_shows()?;
@@ -162,6 +174,7 @@ impl Server {
         app.at("/episodes").get(handle_episodes);
         app.at("/search").get(handle_search);
         app.at("/add_show").put(handle_add);
+        app.at("/remove_show").put(handle_remove);
         app.at("/watch_status")
             .get(handle_get_watch_status)
             .put(handle_set_watch_status);

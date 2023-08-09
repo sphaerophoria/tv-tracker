@@ -61,3 +61,13 @@ export async function request_set_pause_status(show_id, pause_status) {
   });
   return await fetch(request);
 }
+
+export async function request_remove_show(show_id) {
+  const request = new Request("/remove_show", {
+    method: "PUT",
+    body: JSON.stringify({
+      show_id: show_id,
+    }),
+  });
+  return await fetch(request);
+}

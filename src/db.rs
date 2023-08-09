@@ -35,6 +35,24 @@ pub enum DbCreationError {
 pub struct AddShowError(#[source] rusqlite::Error);
 
 #[derive(Debug, Error)]
+pub enum RemoveShowError {
+    #[error("failed to start transaction")]
+    StartTransaction(#[source] rusqlite::Error),
+    #[error("failed to remove pause status")]
+    RemovePaused(#[source] rusqlite::Error),
+    #[error("failed to remove watch status")]
+    RemoveWatched(#[source] rusqlite::Error),
+    #[error("failed to remove episodes")]
+    RemoveEpisodes(#[source] rusqlite::Error),
+    #[error("failed to remove show")]
+    RemoveShow(#[source] rusqlite::Error),
+    #[error("failed to verify foreign keys")]
+    ForeignKeyCheck(#[source] rusqlite::Error),
+    #[error("failed to commit transaction")]
+    CommitTransaction(#[source] rusqlite::Error),
+}
+
+#[derive(Debug, Error)]
 pub enum GetShowError {
     #[error("failed to prepare get show request")]
     Prepare(#[source] rusqlite::Error),
@@ -180,6 +198,46 @@ impl Db {
             .map_err(AddShowError)?;
 
         Ok(ShowId(self.connection.last_insert_rowid()))
+    }
+
+    pub fn remove_show(&mut self, show: &ShowId) -> Result<(), RemoveShowError> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(RemoveShowError::StartTransaction)?;
+
+        transaction
+            .execute("DELETE FROM paused_shows WHERE show_id = ?1", [show.0])
+            .map_err(RemoveShowError::RemovePaused)?;
+
+        transaction
+            .execute(
+                "
+                DELETE FROM watch_status WHERE episode_id IN (
+                    SELECT id FROM episodes WHERE show_id = ?1
+                )
+                ",
+                [show.0],
+            )
+            .map_err(RemoveShowError::RemoveWatched)?;
+
+        transaction
+            .execute("DELETE FROM episodes WHERE show_id = ?1", [show.0])
+            .map_err(RemoveShowError::RemoveEpisodes)?;
+
+        transaction
+            .execute("DELETE FROM shows WHERE id = ?1", [show.0])
+            .map_err(RemoveShowError::RemoveShow)?;
+
+        transaction
+            .execute("PRAGMA foreign_key_check", [])
+            .map_err(RemoveShowError::ForeignKeyCheck)?;
+
+        transaction
+            .commit()
+            .map_err(RemoveShowError::CommitTransaction)?;
+
+        Ok(())
     }
 
     pub fn get_shows(&self) -> Result<Vec<(ShowId, TvMazeShowId, TvShow)>, GetShowError> {
@@ -860,5 +918,65 @@ mod test {
             .expect("Failed to set pause");
         let paused = db.get_paused_shows().expect("Failed to get shows");
         assert_eq!(paused.len(), 0);
+    }
+
+    #[test]
+    fn test_remove_show() {
+        let show = TvShow {
+            name: "Test Show".to_string(),
+            image: None,
+            year: None,
+            url: None,
+            imdb_id: None,
+            tvdb_id: None,
+        };
+
+        let episode = TvEpisode {
+            name: "Test Episode".to_string(),
+            season: 1,
+            episode: 34,
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023),
+        };
+
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+
+        let id = db
+            .add_show(&show, &TvMazeShowId(0))
+            .expect("Failed to add show");
+
+        db.set_pause_status(&id, true).expect("Failed to set pause");
+
+        let episode_id = db
+            .add_episode(&id, &episode)
+            .expect("Failed to add episode");
+
+        let watch_date = NaiveDate::from_num_days_from_ce_opt(1024).expect("Invalid date");
+
+        db.set_episode_watch_status(&episode_id, Some(watch_date))
+            .expect("Failed to set watch status");
+
+        let paused = db.get_paused_shows().expect("Failed to get shows");
+        assert_eq!(paused.len(), 1);
+
+        let episodes = db.get_episodes(&id).expect("Failed to get episodes");
+        assert_eq!(episodes.len(), 1);
+
+        let watched = db
+            .get_show_watch_status(&id)
+            .expect("Failed to get watch status");
+        assert_eq!(watched.len(), 1);
+
+        db.remove_show(&id).expect("Failed to remove show");
+
+        let paused = db.get_paused_shows().expect("Failed to get shows");
+        assert_eq!(paused.len(), 0);
+
+        let episodes = db.get_episodes(&id).expect("Failed to get episodes");
+        assert_eq!(episodes.len(), 0);
+
+        let watched = db
+            .get_show_watch_status(&id)
+            .expect("Failed to get watch status");
+        assert_eq!(watched.len(), 0);
     }
 }
