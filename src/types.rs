@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use std::collections::HashMap;
+
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct ImdbShowId(pub String);
 
@@ -22,6 +24,18 @@ pub struct TvEpisode {
     pub season: i64,
     pub episode: i64,
     pub airdate: Option<chrono::NaiveDate>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct TvShowEpisode {
+    pub show_id: ShowId,
+    pub episode: TvEpisode,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TvEpisodesList {
+    pub shows: HashMap<ShowId, TvShow>,
+    pub episodes: Vec<TvShowEpisode>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]

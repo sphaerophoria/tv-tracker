@@ -71,3 +71,15 @@ export async function request_remove_show(show_id) {
   });
   return await fetch(request);
 }
+
+export async function request_episodes_aired_between(start_date, end_date) {
+  const params = new URLSearchParams({
+    start_date: start_date,
+    end_date: end_date,
+  });
+  const request = new Request("/episodes_aired_between?" + params.toString(), {
+    method: "GET",
+  });
+  const response = await fetch(request);
+  return await response.json();
+}

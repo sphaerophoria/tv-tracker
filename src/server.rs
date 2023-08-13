@@ -140,6 +140,23 @@ async fn handle_set_show_pause_status(
     Ok(tide::StatusCode::Ok)
 }
 
+#[derive(Deserialize)]
+struct GetEpisodesAiredBetweenParams {
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+}
+
+async fn handle_get_episodes_aired_between(
+    req: tide::Request<App>,
+) -> tide::Result<serde_json::Value> {
+    let query: GetEpisodesAiredBetweenParams = req.query()?;
+    let app = req.state();
+    Ok(serde_json::to_value(app.get_episodes_aired_between(
+        &query.start_date,
+        &query.end_date,
+    )?)?)
+}
+
 #[derive(Error, Debug)]
 pub enum ServerCreationError {
     #[error("failed to extract client")]
@@ -183,6 +200,8 @@ impl Server {
         app.at("/pause_status")
             .get(handle_get_pause_status)
             .put(handle_set_show_pause_status);
+        app.at("/episodes_aired_between")
+            .get(handle_get_episodes_aired_between);
 
         Ok(Server {
             app,

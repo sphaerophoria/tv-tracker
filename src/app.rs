@@ -12,7 +12,7 @@ use std::{
 use crate::{
     db::{self, AddShowError as DbAddShowError, Db, GetShowError},
     tv_maze::{self, TvMazeApiError, TvMazeShow, TvMazeShowId},
-    types::{EpisodeId, ShowId, TvEpisode, TvShow},
+    types::{EpisodeId, ShowId, TvEpisode, TvEpisodesList, TvShow},
 };
 
 #[derive(Debug, Error)]
@@ -266,5 +266,14 @@ impl App {
     pub fn get_paused_shows(&self) -> Result<HashSet<ShowId>, db::GetPausedShowError> {
         let inner = self.inner.lock().expect("Poisoned lock");
         inner.db.get_paused_shows()
+    }
+
+    pub fn get_episodes_aired_between(
+        &self,
+        start_date: &NaiveDate,
+        end_date: &NaiveDate,
+    ) -> Result<TvEpisodesList, db::GetAiredEpisodesError> {
+        let inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.get_episodes_aired_between(start_date, end_date)
     }
 }
