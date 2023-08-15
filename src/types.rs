@@ -39,6 +39,14 @@ pub struct TvShow {
     pub tvdb_id: Option<TvdbShowId>,
     pub watch_status: ShowWatchStatus,
     pub pause_status: bool,
+    pub rating_id: Option<RatingId>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct TvShowUpdate {
+    pub id: ShowId,
+    pub pause_status: Option<bool>,
+    pub rating_id: Option<RatingId>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
@@ -60,8 +68,18 @@ pub struct TvEpisode {
     pub watch_date: Option<chrono::NaiveDate>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Rating {
+    pub id: RatingId,
+    pub name: String,
+    pub priority: usize,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct ShowId(pub i64);
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct EpisodeId(pub i64);
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub struct RatingId(pub i64);

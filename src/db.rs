@@ -1,8 +1,8 @@
 use crate::{
     tv_maze::TvMazeShowId,
     types::{
-        EpisodeId, ImdbShowId, RemoteEpisode, RemoteTvShow, ShowId, ShowWatchStatus, TvEpisode,
-        TvShow, TvdbShowId,
+        EpisodeId, ImdbShowId, Rating, RatingId, RemoteEpisode, RemoteTvShow, ShowId,
+        ShowWatchStatus, TvEpisode, TvShow, TvdbShowId,
     },
 };
 
@@ -31,6 +31,8 @@ pub enum DbCreationError {
     UpgradeEpisodesTalbeV2(#[source] rusqlite::Error),
     #[error("failed to create paused show table")]
     CreatePausedShows(#[source] rusqlite::Error),
+    #[error("failed to create ratings tables")]
+    CreateRatings(#[source] rusqlite::Error),
 }
 
 #[derive(Debug, Error)]
@@ -93,6 +95,8 @@ pub enum GetShowError {
     GetWatchCount(#[source] rusqlite::Error),
     #[error("incorrect number of elements returned")]
     IncorrectLen,
+    #[error("failed to get rating id")]
+    GetRatingId(#[source] rusqlite::Error),
 }
 
 #[derive(Debug, Error)]
@@ -156,7 +160,7 @@ pub struct SetPauseError(#[source] rusqlite::Error);
 
 const GET_SHOWS_QUERY: &str =
     "
-    SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_url, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, watch_count.count, epi_count.count, paused_shows.show_id FROM shows
+    SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_url, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, watch_count.count, epi_count.count, paused_shows.show_id, show_ratings.rating_id FROM shows
     LEFT JOIN
         (
             SELECT show_id, COUNT(*) as count FROM episodes
@@ -173,7 +177,58 @@ const GET_SHOWS_QUERY: &str =
         ) as watch_count
         ON shows.id = watch_count.show_id
     LEFT JOIN paused_shows ON shows.id = paused_shows.show_id
+    LEFT JOIN show_ratings ON shows.id = show_ratings.show_id
     ";
+
+#[derive(Debug, Error)]
+pub enum GetRatingsError {
+    #[error("failed to prepare statement")]
+    Prepare(#[source] rusqlite::Error),
+    #[error("failed to execute query")]
+    Query(#[source] rusqlite::Error),
+    #[error("failed to get row")]
+    GetRow(#[source] rusqlite::Error),
+    #[error("failed to get id")]
+    GetId(#[source] rusqlite::Error),
+    #[error("failed to get name")]
+    GetName(#[source] rusqlite::Error),
+    #[error("failed to get priority")]
+    GetPriority(#[source] rusqlite::Error),
+    #[error("failed to find rating")]
+    Missing,
+}
+
+#[derive(Debug, Error)]
+pub enum AddRatingError {
+    #[error("failed to start transaction")]
+    Transaction(#[source] rusqlite::Error),
+    #[error("failed to prepare get priority statement")]
+    PrepareGetPriority(#[source] rusqlite::Error),
+    #[error("failed to query for largest priority")]
+    QueryGetPriority(#[source] rusqlite::Error),
+    #[error("failed to extract priority from sqlite response")]
+    GetPriorityRow(#[source] rusqlite::Error),
+    #[error("failed to insert new rating")]
+    Insert(#[source] rusqlite::Error),
+    #[error("failed to commit transaction")]
+    CommitTransaction(#[source] rusqlite::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum DeleteRatingError {
+    #[error("failed to start transaction")]
+    Transaction(#[source] rusqlite::Error),
+    #[error("failed to commit transaction")]
+    CommitTransaction(#[source] rusqlite::Error),
+    #[error("failed to delete rating")]
+    DeleteRating(#[source] rusqlite::Error),
+    #[error("failed to delete show ratings")]
+    DeleteShowRatings(#[source] rusqlite::Error),
+}
+
+#[derive(Debug, Error)]
+#[error("failed to set show rating")]
+pub struct SetShowRatingError(#[source] rusqlite::Error);
 
 pub struct Db {
     connection: Connection,
@@ -271,7 +326,7 @@ impl Db {
         get_show_with_connection(&self.connection, id, today)
     }
 
-    pub fn get_shows(&self, today: &NaiveDate) -> Result<Vec<TvShow>, GetShowError> {
+    pub fn get_shows(&self, today: &NaiveDate) -> Result<HashMap<ShowId, TvShow>, GetShowError> {
         let mut statement = self
             .connection
             .prepare(GET_SHOWS_QUERY)
@@ -280,7 +335,7 @@ impl Db {
         let mut rows = statement
             .query([today.num_days_from_ce()])
             .map_err(GetShowError::Execute)?;
-        let mut ret = Vec::new();
+        let mut ret = HashMap::new();
 
         loop {
             let row = rows.next().map_err(GetShowError::GetRow)?;
@@ -304,10 +359,11 @@ impl Db {
                     episodes_watched: 8,
                     num_episodes: 9,
                     pause_status: 10,
+                    rating_id: 11,
                 },
             )?;
 
-            ret.push(show);
+            ret.insert(show.id, show);
         }
 
         Ok(ret)
@@ -548,10 +604,175 @@ impl Db {
 
         Ok(ret)
     }
+
+    pub fn get_ratings(&mut self) -> Result<HashMap<RatingId, Rating>, GetRatingsError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, name, priority FROM ratings")
+            .map_err(GetRatingsError::Prepare)?;
+
+        let mut ret = HashMap::new();
+
+        let mut rows = statement.query([]).map_err(GetRatingsError::Query)?;
+
+        while let Some(row) = rows.next().map_err(GetRatingsError::GetRow)? {
+            let id = row.get(0).map_err(GetRatingsError::GetId)?;
+            let id = RatingId(id);
+
+            let name = row.get(1).map_err(GetRatingsError::GetName)?;
+            let priority = row.get(2).map_err(GetRatingsError::GetPriority)?;
+            let rating = Rating { id, name, priority };
+            ret.insert(id, rating);
+        }
+
+        Ok(ret)
+    }
+
+    pub fn get_rating(&mut self, id: &RatingId) -> Result<Rating, GetRatingsError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, name, priority FROM ratings WHERE id = ?1")
+            .map_err(GetRatingsError::Prepare)?;
+
+        let mut rows = statement.query([id.0]).map_err(GetRatingsError::Query)?;
+
+        match rows.next().map_err(GetRatingsError::GetRow)? {
+            Some(row) => {
+                let id = row.get(0).map_err(GetRatingsError::GetId)?;
+                let id = RatingId(id);
+
+                let name = row.get(1).map_err(GetRatingsError::GetName)?;
+                let priority = row.get(2).map_err(GetRatingsError::GetPriority)?;
+                Ok(Rating { id, name, priority })
+            }
+            None => Err(GetRatingsError::Missing),
+        }
+    }
+
+    pub fn add_rating(&mut self, name: &str) -> Result<RatingId, AddRatingError> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(AddRatingError::Transaction)?;
+
+        let priority = {
+            let mut statement = transaction
+                .prepare("SELECT MAX(priority) FROM ratings")
+                .map_err(AddRatingError::PrepareGetPriority)?;
+
+            let mut rows = statement
+                .query([])
+                .map_err(AddRatingError::QueryGetPriority)?;
+
+            let priority = match rows.next() {
+                Ok(Some(v)) => v
+                    .get::<usize, Option<i64>>(0)
+                    .map_err(AddRatingError::GetPriorityRow)?
+                    .unwrap_or(0),
+                Ok(None) => 0,
+                Err(e) => return Err(AddRatingError::GetPriorityRow(e)),
+            };
+
+            match rows.next() {
+                Ok(None) => (),
+                _ => panic!("Unexpected extra row"),
+            };
+            priority
+        };
+
+        transaction
+            .execute(
+                "
+                INSERT INTO ratings(name, priority)
+                VALUES (?1, ?2)
+                ",
+                params![name, priority + 1],
+            )
+            .map_err(AddRatingError::Insert)?;
+
+        let last_row_id = RatingId(transaction.last_insert_rowid());
+
+        transaction
+            .commit()
+            .map_err(AddRatingError::CommitTransaction)?;
+
+        Ok(last_row_id)
+    }
+
+    pub fn update_rating(&self, rating: &Rating) -> Result<(), rusqlite::Error> {
+        self.connection.execute(
+            "
+                UPDATE ratings SET name = ?2, priority = ?3
+                WHERE id = ?1
+                ",
+            params![rating.id.0, rating.name, rating.priority],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_rating(&mut self, rating: &RatingId) -> Result<(), DeleteRatingError> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(DeleteRatingError::Transaction)?;
+
+        transaction
+            .execute(
+                "
+            DELETE FROM show_ratings WHERE rating_id = ?1
+            ",
+                [rating.0],
+            )
+            .map_err(DeleteRatingError::DeleteShowRatings)?;
+
+        transaction
+            .execute(
+                "
+            DELETE FROM ratings WHERE id = ?1
+            ",
+                [rating.0],
+            )
+            .map_err(DeleteRatingError::DeleteRating)?;
+
+        transaction
+            .commit()
+            .map_err(DeleteRatingError::CommitTransaction)?;
+
+        Ok(())
+    }
+
+    pub fn set_show_rating(
+        &self,
+        show_id: &ShowId,
+        rating_id: &Option<RatingId>,
+    ) -> Result<(), SetShowRatingError> {
+        if let Some(rating_id) = rating_id {
+            self.connection
+                .execute(
+                    "
+                    INSERT INTO show_ratings(show_id, rating_id)
+                    VALUES (?1, ?2)
+                    ON CONFLICT(show_id) DO UPDATE SET rating_id = ?2
+                    ",
+                    [show_id.0, rating_id.0],
+                )
+                .map_err(SetShowRatingError)?;
+        } else {
+            self.connection
+                .execute(
+                    "
+                    DELETE FROM show_ratings WHERE show_id = ?1
+                    ",
+                    [show_id.0],
+                )
+                .map_err(SetShowRatingError)?;
+        }
+
+        Ok(())
+    }
 }
 
-fn show_ids_to_comma_separated(show_ids: &HashSet<ShowId>) -> String {
-    let mut it = show_ids.iter();
+fn show_ids_to_comma_separated<'a, I: Iterator<Item = &'a ShowId>>(mut it: I) -> String {
     let first = it.next();
 
     let mut ret = match first {
@@ -597,7 +818,7 @@ fn get_shows_with_filter(
     if let Some(show_ids) = show_ids {
         query_str.push_str(&format!(
             "WHERE shows.id IN ({})",
-            show_ids_to_comma_separated(&show_ids)
+            show_ids_to_comma_separated(show_ids.iter())
         ));
     }
 
@@ -625,6 +846,7 @@ fn get_shows_with_filter(
                 episodes_watched: 8,
                 num_episodes: 9,
                 pause_status: 10,
+                rating_id: 11,
             },
         )?;
 
@@ -708,6 +930,7 @@ struct ShowIndices {
     episodes_watched: usize,
     num_episodes: usize,
     pause_status: usize,
+    rating_id: usize,
 }
 
 fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetShowError> {
@@ -718,6 +941,11 @@ fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetS
         .get(indices.remote_id)
         .map_err(GetShowError::GetRemoteId)?;
     let remote_id = TvMazeShowId(remote_id);
+
+    let rating_id: Option<i64> = row
+        .get(indices.rating_id)
+        .map_err(GetShowError::GetRatingId)?;
+    let rating_id = rating_id.map(RatingId);
 
     let name = row.get(indices.name).map_err(GetShowError::GetName)?;
 
@@ -765,6 +993,7 @@ fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetS
         url,
         watch_status,
         pause_status,
+        rating_id,
     })
 }
 
@@ -875,12 +1104,48 @@ fn upgrade_v2_v3(connection: &mut Connection) -> Result<(), DbCreationError> {
     Ok(())
 }
 
+fn upgrade_v3_v4(connection: &mut Connection) -> Result<(), DbCreationError> {
+    let transaction = connection
+        .transaction()
+        .map_err(DbCreationError::StartTransaction)?;
+
+    transaction
+        .execute_batch(
+            "
+            CREATE TABLE ratings(
+                id INTEGER PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                priority INTEGER NOT NULL
+            );
+            CREATE TABLE show_ratings(
+                show_id INTEGER PRIMARY KEY NOT NULL,
+                rating_id INTEGER NOT NULL,
+                FOREIGN KEY (show_id) references shows(id),
+                FOREIGN KEY (rating_id) references ratings(id)
+            );
+            PRAGMA user_version = 4;
+            ",
+        )
+        .map_err(DbCreationError::CreateRatings)?;
+
+    transaction
+        .commit()
+        .map_err(DbCreationError::CommitTransaction)?;
+
+    Ok(())
+}
+
 fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationError> {
     let version: usize = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(DbCreationError::GetVersion)?;
 
-    let upgrade_functions = [initialize_v1_db, upgrade_v1_v2, upgrade_v2_v3];
+    let upgrade_functions = [
+        initialize_v1_db,
+        upgrade_v1_v2,
+        upgrade_v2_v3,
+        upgrade_v3_v4,
+    ];
 
     for f in upgrade_functions.iter().skip(version) {
         f(connection)?;
@@ -890,7 +1155,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(DbCreationError::GetVersion)?;
 
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
 
     Ok(())
 }
@@ -936,12 +1201,8 @@ mod test {
         NaiveDate::from_num_days_from_ce_opt(num_days_since_ce).expect("Failed to generate date")
     }
 
-    fn find_show(id: ShowId, shows: &[TvShow]) -> TvShow {
-        shows
-            .iter()
-            .find(|show| show.id == id)
-            .expect("Failed to find show")
-            .clone()
+    fn find_show(id: ShowId, shows: &HashMap<ShowId, TvShow>) -> TvShow {
+        shows[&id].clone()
     }
 
     #[test]
@@ -1243,5 +1504,100 @@ mod test {
             .and_then(|x| x.airdate);
         assert_eq!(min_date, Some(start_date));
         assert_eq!(max_date, Some(end_date));
+    }
+
+    #[test]
+    fn test_ratings() {
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+        let shows = [
+            generate_empty_show("Show 1", 0),
+            generate_empty_show("Show 2", 1),
+            generate_empty_show("Show 3", 2),
+        ];
+        let ids: Vec<_> = shows
+            .iter()
+            .map(|show| db.add_show(show).expect("Failed to add show"))
+            .collect();
+
+        let ratings = ["Super good", "bad", "good", "unbearable"];
+
+        let rating_ids: Vec<_> = ratings
+            .iter()
+            .map(|rating| db.add_rating(rating).expect("Failed to add rating"))
+            .collect();
+
+        let mut retrieved_ratings = db.get_ratings().expect("Failed to get ratings");
+        assert_eq!(retrieved_ratings.len(), 4);
+        assert_eq!(retrieved_ratings[&rating_ids[0]].priority, 1);
+        assert_eq!(&retrieved_ratings[&rating_ids[0]].name, "Super good");
+        assert_eq!(retrieved_ratings[&rating_ids[1]].priority, 2);
+        assert_eq!(&retrieved_ratings[&rating_ids[1]].name, "bad");
+        assert_eq!(retrieved_ratings[&rating_ids[2]].priority, 3);
+        assert_eq!(&retrieved_ratings[&rating_ids[2]].name, "good");
+        assert_eq!(retrieved_ratings[&rating_ids[3]].priority, 4);
+        assert_eq!(&retrieved_ratings[&rating_ids[3]].name, "unbearable");
+
+        retrieved_ratings
+            .get_mut(&rating_ids[1])
+            .expect("Failed to get rating")
+            .priority = 3;
+        retrieved_ratings
+            .get_mut(&rating_ids[2])
+            .expect("Failed to get rating")
+            .priority = 2;
+
+        db.update_rating(&retrieved_ratings[&rating_ids[1]])
+            .expect("Failed to set rating order");
+        db.update_rating(&retrieved_ratings[&rating_ids[2]])
+            .expect("Failed to set rating order");
+
+        let retrieved_ratings = db.get_ratings().expect("Failed to get ratings");
+        assert_eq!(retrieved_ratings.len(), 4);
+        assert_eq!(retrieved_ratings[&rating_ids[0]].priority, 1);
+        assert_eq!(&retrieved_ratings[&rating_ids[0]].name, "Super good");
+        assert_eq!(retrieved_ratings[&rating_ids[1]].priority, 3);
+        assert_eq!(&retrieved_ratings[&rating_ids[1]].name, "bad");
+        assert_eq!(retrieved_ratings[&rating_ids[2]].priority, 2);
+        assert_eq!(&retrieved_ratings[&rating_ids[2]].name, "good");
+        assert_eq!(retrieved_ratings[&rating_ids[3]].priority, 4);
+        assert_eq!(&retrieved_ratings[&rating_ids[3]].name, "unbearable");
+
+        db.set_show_rating(&ids[0], &Some(rating_ids[0]))
+            .expect("Failed to set rating");
+        db.set_show_rating(&ids[2], &Some(rating_ids[3]))
+            .expect("Failed to set rating");
+
+        let retrieved_shows = db.get_shows(&gen_date(1234)).expect("Failed to get shows");
+        assert_eq!(retrieved_shows.len(), 3);
+        assert_eq!(retrieved_shows[&ids[0]].rating_id, Some(rating_ids[0]));
+        assert_eq!(retrieved_shows[&ids[1]].rating_id, None);
+        assert_eq!(retrieved_shows[&ids[2]].rating_id, Some(rating_ids[3]));
+
+        db.delete_rating(&rating_ids[0])
+            .expect("Failed to delete rating");
+
+        let retrieved_ratings = db.get_ratings().expect("Failed to get ratings");
+        assert_eq!(retrieved_ratings.len(), 3);
+        assert_eq!(retrieved_ratings[&rating_ids[1]].priority, 3);
+        assert_eq!(&retrieved_ratings[&rating_ids[1]].name, "bad");
+        assert_eq!(retrieved_ratings[&rating_ids[2]].priority, 2);
+        assert_eq!(&retrieved_ratings[&rating_ids[2]].name, "good");
+        assert_eq!(retrieved_ratings[&rating_ids[3]].priority, 4);
+        assert_eq!(&retrieved_ratings[&rating_ids[3]].name, "unbearable");
+
+        let retrieved_shows = db.get_shows(&gen_date(1234)).expect("Failed to get shows");
+        assert_eq!(retrieved_shows.len(), 3);
+        assert_eq!(retrieved_shows[&ids[0]].rating_id, None);
+        assert_eq!(retrieved_shows[&ids[1]].rating_id, None);
+        assert_eq!(retrieved_shows[&ids[2]].rating_id, Some(rating_ids[3]));
+
+        db.set_show_rating(&ids[2], &None)
+            .expect("Failed to set rating");
+
+        let retrieved_shows = db.get_shows(&gen_date(1234)).expect("Failed to get shows");
+        assert_eq!(retrieved_shows.len(), 3);
+        assert_eq!(retrieved_shows[&ids[0]].rating_id, None);
+        assert_eq!(retrieved_shows[&ids[1]].rating_id, None);
+        assert_eq!(retrieved_shows[&ids[2]].rating_id, None);
     }
 }

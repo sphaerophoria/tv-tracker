@@ -9,7 +9,7 @@ use std::{fs::File, path::Path};
 use crate::{
     app::App,
     tv_maze::TvMazeShowId,
-    types::{EpisodeId, ShowId},
+    types::{EpisodeId, Rating, RatingId, ShowId, TvShowUpdate},
 };
 
 #[derive(Error, Debug)]
@@ -61,12 +61,6 @@ async fn get_show(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
     Ok(serde_json::to_value(show)?)
 }
 
-#[derive(Debug, Deserialize)]
-struct PutShowRequest {
-    id: ShowId,
-    pause_status: bool,
-}
-
 #[derive(Debug, Error)]
 #[error("id does not match URI")]
 struct NonMatchingId;
@@ -75,13 +69,13 @@ async fn put_show(mut req: tide::Request<App>) -> tide::Result<serde_json::Value
     let id: i64 = req.param("id")?.parse()?;
     let id = ShowId(id);
 
-    let params: PutShowRequest = req.body_json().await?;
+    let params: TvShowUpdate = req.body_json().await?;
     if params.id != id {
         return Err(NonMatchingId.into());
     }
 
     let app = req.state();
-    let show = app.set_show_pause_status(&id, params.pause_status)?;
+    let show = app.update_show(&params)?;
     Ok(serde_json::to_value(show)?)
 }
 
@@ -154,6 +148,50 @@ async fn put_episode(mut req: tide::Request<App>) -> tide::Result<serde_json::Va
     Ok(serde_json::to_value(response)?)
 }
 
+async fn get_ratings(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let app = req.state();
+    Ok(serde_json::to_value(app.get_ratings()?)?)
+}
+
+async fn get_rating(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let id = req.param("id")?.parse()?;
+    let id = RatingId(id);
+
+    let app = req.state();
+    Ok(serde_json::to_value(app.get_rating(&id)?)?)
+}
+
+#[derive(Debug, Deserialize)]
+struct SetRatingsRequest {
+    name: String,
+}
+
+async fn put_ratings(mut req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let request: SetRatingsRequest = req.body_json().await?;
+    let app = req.state();
+    Ok(serde_json::to_value(app.add_rating(&request.name)?)?)
+}
+
+async fn put_rating(mut req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let id: i64 = req.param("id")?.parse()?;
+    let id = RatingId(id);
+
+    let params: Rating = req.body_json().await?;
+    if params.id != id {
+        return Err(NonMatchingId.into());
+    }
+
+    let app = req.state();
+    Ok(serde_json::to_value(app.update_rating(&params)?)?)
+}
+
+async fn delete_rating(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let id: i64 = req.param("id")?.parse()?;
+    let id = RatingId(id);
+    let app = req.state();
+    Ok(serde_json::to_value(app.delete_rating(&id)?)?)
+}
+
 #[derive(Error, Debug)]
 pub enum ServerCreationError {
     #[error("failed to extract client")]
@@ -201,6 +239,13 @@ impl Server {
         app.at("/episodes").get(get_episodes);
 
         app.at("/episodes/:id").get(get_episode).put(put_episode);
+
+        app.at("/ratings").get(get_ratings).put(put_ratings);
+
+        app.at("/ratings/:id")
+            .get(get_rating)
+            .put(put_rating)
+            .delete(delete_rating);
 
         Ok(Server {
             app,

@@ -12,7 +12,7 @@ use std::{
 use crate::{
     db::{self, AddShowError as DbAddShowError, Db, GetShowError},
     tv_maze::{self, TvMazeApiError, TvMazeShowId},
-    types::{EpisodeId, RemoteTvShow, ShowId, TvEpisode, TvShow},
+    types::{EpisodeId, Rating, RatingId, RemoteTvShow, ShowId, TvEpisode, TvShow, TvShowUpdate},
 };
 
 #[derive(Debug, Error)]
@@ -32,9 +32,11 @@ pub enum AddShowError {
 }
 
 #[derive(Debug, Error)]
-pub enum SetPauseError {
+pub enum UpdateShowError {
     #[error("failed to set pause status in db")]
-    Db(#[from] db::SetPauseError),
+    SetPause(#[from] db::SetPauseError),
+    #[error("failed to set rating in db")]
+    SetRating(#[from] db::SetShowRatingError),
     #[error("failed to get shows after modification")]
     GetShows(#[from] db::GetShowError),
 }
@@ -45,6 +47,28 @@ pub enum SetWatchStatusError {
     Db(#[from] db::SetWatchStatusError),
     #[error("failed to get episode after modification")]
     GetEpisode(#[from] db::GetEpisodeError),
+}
+
+#[derive(Debug, Error)]
+pub enum GetRatingError {
+    #[error("failed to get ratings from db")]
+    Db(#[from] db::GetRatingsError),
+}
+
+#[derive(Debug, Error)]
+pub enum AddRatingError {
+    #[error("failed to add rating to db")]
+    Add(#[from] db::AddRatingError),
+    #[error("failed to get ratings from db")]
+    Retrieve(#[from] db::GetRatingsError),
+}
+
+#[derive(Debug, Error)]
+pub enum UpdateRatingError {
+    #[error("failed to update rating in db")]
+    UpdateRating(#[from] rusqlite::Error),
+    #[error("failed to get ratings from db")]
+    GetRatings(#[from] db::GetRatingsError),
 }
 
 struct IndexPoller {
@@ -69,7 +93,7 @@ impl IndexPoller {
             }
         };
 
-        for show in monitored_shows.iter() {
+        for show in monitored_shows.values() {
             let episodes = match tv_maze::episodes(&show.remote_id) {
                 Ok(v) => v,
                 Err(e) => {
@@ -143,7 +167,7 @@ impl App {
             .get_shows(&today())
             .map_err(AddShowError::LoadExisting)?;
 
-        for show in existing_shows {
+        for show in existing_shows.values() {
             if show.remote_id == *indexer_show_id {
                 return Err(AddShowError::ShowExists);
             }
@@ -178,7 +202,7 @@ impl App {
     pub fn shows(&self) -> Result<HashMap<ShowId, TvShow>, GetShowError> {
         let inner = self.inner.lock().expect("Poisoned lock");
         let shows = inner.db.get_shows(&today())?;
-        Ok(shows.into_iter().map(|show| (show.id, show)).collect())
+        Ok(shows)
     }
 
     pub fn get_episode(&self, episode_id: &EpisodeId) -> Result<TvEpisode, db::GetEpisodeError> {
@@ -209,14 +233,15 @@ impl App {
         Ok(inner.db.get_episode(episode)?)
     }
 
-    pub fn set_show_pause_status(
-        &self,
-        show_id: &ShowId,
-        pause: bool,
-    ) -> Result<TvShow, SetPauseError> {
+    pub fn update_show(&self, show: &TvShowUpdate) -> Result<TvShow, UpdateShowError> {
         let inner = self.inner.lock().expect("Poisoned lock");
-        inner.db.set_pause_status(show_id, pause)?;
-        Ok(inner.db.get_show(show_id, &today())?)
+        if let Some(pause_status) = &show.pause_status {
+            inner.db.set_pause_status(&show.id, *pause_status)?;
+        }
+
+        inner.db.set_show_rating(&show.id, &show.rating_id)?;
+
+        Ok(inner.db.get_show(&show.id, &today())?)
     }
 
     pub fn get_episodes_aired_between(
@@ -226,6 +251,34 @@ impl App {
     ) -> Result<HashMap<EpisodeId, TvEpisode>, db::GetEpisodeError> {
         let mut inner = self.inner.lock().expect("Poisoned lock");
         inner.db.get_episodes_aired_between(start_date, end_date)
+    }
+
+    pub fn add_rating(&self, name: &str) -> Result<Rating, AddRatingError> {
+        let mut inner = self.inner.lock().expect("Poisoned lock");
+        let id = inner.db.add_rating(name)?;
+        Ok(inner.db.get_rating(&id)?)
+    }
+
+    pub fn get_ratings(&self) -> Result<HashMap<RatingId, Rating>, db::GetRatingsError> {
+        let mut inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.get_ratings()
+    }
+
+    pub fn get_rating(&self, id: &RatingId) -> Result<Rating, GetRatingError> {
+        let mut inner = self.inner.lock().expect("Poisoned lock");
+        Ok(inner.db.get_rating(id)?)
+    }
+
+    pub fn delete_rating(&self, id: &RatingId) -> Result<(), db::DeleteRatingError> {
+        let mut inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.delete_rating(id)?;
+        Ok(())
+    }
+
+    pub fn update_rating(&self, rating: &Rating) -> Result<Rating, UpdateRatingError> {
+        let mut inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.update_rating(rating)?;
+        Ok(inner.db.get_rating(&rating.id)?)
     }
 }
 
