@@ -1,13 +1,11 @@
 "use strict";
 
 import {
-  request_episodes,
-  request_shows,
-  request_watch_status,
-  request_set_watch_status,
-  request_paused_shows,
-  request_set_pause_status,
-  request_remove_show,
+  get_show_episodes,
+  get_show,
+  put_show,
+  put_episode,
+  delete_show,
 } from "./http.js";
 
 function page_show_id() {
@@ -31,142 +29,156 @@ function group_episodes_by_seasons(episodes) {
   return season_episodes;
 }
 
-async function set_show_watch_status(episode_id, watched) {
-  if (watched) {
-    request_set_watch_status(episode_id, null);
-  } else {
-    const now = new Date(Date.now());
-    let date_string = now.toISOString().substring(0, 10);
-
-    request_set_watch_status(episode_id, date_string);
-  }
-
-  init();
-}
-
-async function mark_aired_watched(episodes) {
-  const now = new Date(Date.now());
-  let date_string = now.toISOString().substring(0, 10);
-  for (const episode_id in episodes) {
-    const episode = episodes[episode_id];
-    if (now > Date.parse(episode.airdate)) {
-      await request_set_watch_status(parseInt(episode_id), date_string);
-    }
-  }
-  init();
-}
-
-async function mark_all_unwatched(episodes) {
-  for (const episode_id in episodes) {
-    await request_set_watch_status(parseInt(episode_id), null);
-  }
-  init();
-}
-
-async function pause_show(show_id, pause_state) {
-  await request_set_pause_status(show_id, pause_state);
-  init();
-}
-
 async function remove_show(show_id) {
-  await request_remove_show(show_id);
+  await delete_show(show_id);
   window.location.href = "/shows.html";
 }
 
-function render_show(show, episodes, watch_status) {
-  let ret = "";
-  let season_episodes = group_episodes_by_seasons(episodes);
-  let today = Date.now();
+class ShowPage {
+  constructor(show, episodes) {
+    this.show = show;
+    this.episodes = episodes;
 
-  for (const [season, episodes] of season_episodes) {
-    ret += "<h2>Season " + season + "</h2>";
-    for (let [episode_id, episode] of episodes) {
-      let aired_class = "unaired";
-      if (episode.airdate !== null && Date.parse(episode.airdate) < today) {
-        aired_class = "aired";
-      }
+    const mark_watched_button = document.getElementById("mark-all-watched");
+    mark_watched_button.onclick = () => this.mark_aired_watched();
 
-      let watched_class = "unwatched";
-      const episode_watched = episode_id in watch_status;
-      if (episode_watched) {
-        watched_class = "watched";
-      }
+    const mark_unwatched_button = document.getElementById("mark-all-unwatched");
+    mark_unwatched_button.onclick = () => this.mark_all_unwatched();
 
-      ret += "<a href=javascript:void(0) ";
-      ret += 'class="' + aired_class + " " + watched_class + '"';
-      ret +=
-        ' onclick="set_show_watch_status(' +
-        episode_id +
-        "," +
-        episode_watched +
-        ')" ';
-      ret += ">";
-
-      if (episode.airdate !== null) {
-        ret += " " + episode.airdate;
-      } else {
-        ret += " TBD";
-      }
-      ret += " Episode " + episode.episode;
-      ret += ": ";
-
-      ret += episode.name;
-
-      ret += "</a>";
-      ret += "<br>";
-    }
+    const remove_show_button = document.getElementById("remove-show");
+    remove_show_button.onclick = () => remove_show(this.show.id);
   }
 
-  return ret;
+  async mark_aired_watched() {
+    const now = new Date(Date.now());
+    let date_string = now.toISOString().substring(0, 10);
+    let promises = [];
+    for (const episode_id in this.episodes) {
+      const episode = this.episodes[episode_id];
+      if (now > Date.parse(episode.airdate)) {
+        let new_episode = window.structuredClone(episode);
+        new_episode.watch_date = date_string;
+        promises.push(this.put_episode(new_episode));
+      }
+    }
+
+    await Promise.all(promises);
+    this.render_show();
+  }
+
+  async mark_all_unwatched() {
+    let promises = [];
+    for (const episode_id in this.episodes) {
+      let new_episode = window.structuredClone(this.episodes[episode_id]);
+      new_episode.watch_date = null;
+      promises.push(this.put_episode(new_episode));
+    }
+
+    await Promise.all(promises);
+    this.render_show();
+  }
+
+  async set_show_watch_status(episode_id) {
+    let episode = window.structuredClone(this.episodes[episode_id]);
+
+    if (episode.watch_date != null) {
+      episode.watch_date = null;
+    } else {
+      const now = new Date(Date.now());
+      let date_string = now.toISOString().substring(0, 10);
+      episode.watch_date = date_string;
+    }
+
+    await this.put_episode(episode);
+    this.render_show();
+  }
+
+  async pause_show() {
+    let new_show = window.structuredClone(this.show);
+    new_show.pause_status = !new_show.pause_status;
+    await this.put_show(new_show);
+    this.render_show();
+  }
+
+  async put_show(show) {
+    let response = await put_show(show);
+    this.show = response;
+  }
+  async put_episode(episode) {
+    let response = await put_episode(episode);
+    this.episodes[response.id] = response;
+  }
+
+  render_show() {
+    const title_node = document.getElementById("show-title");
+    title_node.innerHTML = "<h1>" + this.show.name + "</h1>";
+
+    const set_pause_button = document.getElementById("pause");
+
+    if (this.show.pause_status === true) {
+      set_pause_button.value = "Unpause show";
+    } else {
+      set_pause_button.value = "Pause show";
+    }
+    set_pause_button.onclick = () => this.pause_show();
+
+    const div = document.getElementById("show-seasons");
+    div.innerHTML = "";
+
+    let season_episodes = group_episodes_by_seasons(this.episodes);
+    let today = Date.now();
+
+    for (const [season, episodes] of season_episodes) {
+      const season_header = document.createElement("h2");
+      season_header.innerHTML = "Season " + season;
+      div.appendChild(season_header);
+      for (let [episode_id, episode] of episodes) {
+        let aired_class = "unaired";
+        if (episode.airdate !== null && Date.parse(episode.airdate) < today) {
+          aired_class = "aired";
+        }
+
+        let watched_class = "unwatched";
+        const episode_watched = episode.watch_date != null;
+        if (episode_watched) {
+          watched_class = "watched";
+        }
+
+        const link = document.createElement("a");
+        link.href = "javascript:void(0)";
+        link.classList.add(aired_class);
+        link.classList.add(watched_class);
+        link.onclick = () => this.set_show_watch_status(episode.id);
+
+        div.appendChild(link);
+        div.appendChild(document.createElement("br"));
+        const link_text = document.createTextNode("");
+        link.appendChild(link_text);
+
+        if (episode.airdate !== null) {
+          link_text.appendData("" + episode.airdate);
+        } else {
+          link_text.appendData("TBD");
+        }
+        link_text.appendData(
+          " Episode " + episode.episode + ": " + episode.name
+        );
+      }
+    }
+  }
 }
 
 async function init() {
-  window.set_show_watch_status = set_show_watch_status;
-
   const show_id = parseInt(page_show_id());
 
-  const shows_promise = request_shows();
-  const episodes_promise = request_episodes(show_id);
-  const watch_status_promise = request_watch_status(show_id);
-  const paused_shows_promise = request_paused_shows();
+  const show_promise = get_show(show_id);
+  const episodes_promise = get_show_episodes(show_id);
 
-  let shows_json, episodes_json, watch_status_json, paused_shows;
-  [shows_json, episodes_json, watch_status_json, paused_shows] =
-    await Promise.all([
-      shows_promise,
-      episodes_promise,
-      watch_status_promise,
-      paused_shows_promise,
-    ]);
+  let show, episodes;
+  [show, episodes] = await Promise.all([show_promise, episodes_promise]);
 
-  const title_node = document.getElementById("show-title");
-  title_node.innerHTML = "<h1>" + shows_json[show_id].name + "</h1>";
-
-  const show_div = document.getElementById("show-seasons");
-  show_div.innerHTML = render_show(
-    shows_json[show_id],
-    episodes_json,
-    watch_status_json
-  );
-
-  const mark_watched_button = document.getElementById("mark-all-watched");
-  mark_watched_button.onclick = () => mark_aired_watched(episodes_json);
-
-  const mark_unwatched_button = document.getElementById("mark-all-unwatched");
-  mark_unwatched_button.onclick = () => mark_all_unwatched(episodes_json);
-
-  const set_pause_button = document.getElementById("pause");
-
-  const show_paused = paused_shows.includes(show_id);
-  if (show_paused) {
-    set_pause_button.value = "Unpause show";
-  } else {
-    set_pause_button.value = "Pause show";
-  }
-  set_pause_button.onclick = () => pause_show(show_id, !show_paused);
-
-  const remove_show_button = document.getElementById("remove-show");
-  remove_show_button.onclick = () => remove_show(show_id);
+  const page = new ShowPage(show, episodes);
+  page.render_show();
 }
 
 init();

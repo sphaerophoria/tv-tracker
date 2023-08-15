@@ -4,15 +4,15 @@ use thiserror::Error;
 use tracing::{error, info};
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use crate::{
     db::{self, AddShowError as DbAddShowError, Db, GetShowError},
-    tv_maze::{self, TvMazeApiError, TvMazeShow, TvMazeShowId},
-    types::{EpisodeId, ShowId, TvEpisode, TvEpisodesList, TvShow},
+    tv_maze::{self, TvMazeApiError, TvMazeShowId},
+    types::{EpisodeId, RemoteTvShow, ShowId, TvEpisode, TvShow},
 };
 
 #[derive(Debug, Error)]
@@ -27,16 +27,24 @@ pub enum AddShowError {
     LookupEpisodes(#[source] TvMazeApiError),
     #[error("failed to add show to db")]
     AddShowToDb(#[source] DbAddShowError),
+    #[error("failed to get show after add")]
+    GetShow(#[source] db::GetShowError),
 }
 
 #[derive(Debug, Error)]
-pub enum GetShowWatchStatusError {
-    #[error("failed to get shows")]
-    Shows(#[source] db::GetShowError),
-    #[error("failed to get episodes")]
-    Episodes(#[source] db::GetEpisodeError),
-    #[error("failed to get watch_statuses")]
-    WatchStatus(#[source] db::GetWatchStatusError),
+pub enum SetPauseError {
+    #[error("failed to set pause status in db")]
+    Db(#[from] db::SetPauseError),
+    #[error("failed to get shows after modification")]
+    GetShows(#[from] db::GetShowError),
+}
+
+#[derive(Debug, Error)]
+pub enum SetWatchStatusError {
+    #[error("failed to set watch status in db")]
+    Db(#[from] db::SetWatchStatusError),
+    #[error("failed to get episode after modification")]
+    GetEpisode(#[from] db::GetEpisodeError),
 }
 
 struct IndexPoller {
@@ -46,7 +54,12 @@ struct IndexPoller {
 impl IndexPoller {
     fn poll(&mut self) {
         let mut ret = HashMap::new();
-        let monitored_shows = self.inner.lock().expect("Poisoned lock").db.get_shows();
+        let monitored_shows = self
+            .inner
+            .lock()
+            .expect("Poisoned lock")
+            .db
+            .get_shows(&today());
 
         let monitored_shows = match monitored_shows {
             Ok(v) => v,
@@ -56,16 +69,16 @@ impl IndexPoller {
             }
         };
 
-        for (show_id, indexer_id, _) in monitored_shows.iter() {
-            let episodes = match tv_maze::episodes(indexer_id) {
+        for show in monitored_shows.iter() {
+            let episodes = match tv_maze::episodes(&show.remote_id) {
                 Ok(v) => v,
                 Err(e) => {
-                    error!("Failed to get episodes for {}: {e}", show_id.0);
+                    error!("Failed to get episodes for {}: {e}", show.id.0);
                     continue;
                 }
             };
 
-            ret.insert(*show_id, episodes);
+            ret.insert(show.id, episodes);
         }
 
         let mut inner = self.inner.lock().expect("Poisoned lock");
@@ -87,14 +100,6 @@ impl IndexPoller {
             std::thread::sleep(Duration::from_secs(DAY_IN_SECONDS));
         }
     }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowWatchStatus {
-    Finished,
-    Unstarted,
-    InProgress,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -131,12 +136,15 @@ impl App {
         App { inner }
     }
 
-    pub fn add_show(&self, indexer_show_id: &TvMazeShowId) -> Result<(), AddShowError> {
+    pub fn add_show(&self, indexer_show_id: &TvMazeShowId) -> Result<TvShow, AddShowError> {
         let mut inner = self.inner.lock().expect("Poisoned lock");
-        let existing_shows = inner.db.get_shows().map_err(AddShowError::LoadExisting)?;
+        let existing_shows = inner
+            .db
+            .get_shows(&today())
+            .map_err(AddShowError::LoadExisting)?;
 
-        for (_, existing_indexer_id, _) in existing_shows {
-            if existing_indexer_id == *indexer_show_id {
+        for show in existing_shows {
+            if show.remote_id == *indexer_show_id {
                 return Err(AddShowError::ShowExists);
             }
         }
@@ -147,7 +155,7 @@ impl App {
 
         let show_id = inner
             .db
-            .add_show(&show, indexer_show_id)
+            .add_show(&show)
             .map_err(AddShowError::AddShowToDb)?;
 
         for episode in episodes {
@@ -156,7 +164,10 @@ impl App {
             }
         }
 
-        Ok(())
+        inner
+            .db
+            .get_show(&show_id, &today())
+            .map_err(AddShowError::GetShow)
     }
 
     pub fn remove_show(&self, show_id: &ShowId) -> Result<(), db::RemoveShowError> {
@@ -166,24 +177,24 @@ impl App {
 
     pub fn shows(&self) -> Result<HashMap<ShowId, TvShow>, GetShowError> {
         let inner = self.inner.lock().expect("Poisoned lock");
-
-        let shows = inner.db.get_shows()?;
-
-        Ok(shows
-            .into_iter()
-            .map(|(show_id, _indexer_id, show)| (show_id, show))
-            .collect())
+        let shows = inner.db.get_shows(&today())?;
+        Ok(shows.into_iter().map(|show| (show.id, show)).collect())
     }
 
-    pub fn episodes(
+    pub fn get_episode(&self, episode_id: &EpisodeId) -> Result<TvEpisode, db::GetEpisodeError> {
+        let inner = self.inner.lock().expect("Poisoned lock");
+        inner.db.get_episode(episode_id)
+    }
+
+    pub fn episodes_for_show(
         &self,
         show_id: &ShowId,
     ) -> Result<HashMap<EpisodeId, TvEpisode>, db::GetEpisodeError> {
         let inner = self.inner.lock().expect("Poisoned lock");
-        inner.db.get_episodes(show_id)
+        inner.db.get_episodes_for_show(show_id)
     }
 
-    pub fn search(&self, query: &str) -> Result<Vec<TvMazeShow>, TvMazeApiError> {
+    pub fn search(&self, query: &str) -> Result<Vec<RemoteTvShow<TvMazeShowId>>, TvMazeApiError> {
         let results = tv_maze::search(query)?;
         Ok(results)
     }
@@ -191,89 +202,33 @@ impl App {
     pub fn set_watch_status(
         &self,
         episode: &EpisodeId,
-        status: Option<NaiveDate>,
-    ) -> Result<(), db::SetWatchStatusError> {
+        status: &Option<NaiveDate>,
+    ) -> Result<TvEpisode, SetWatchStatusError> {
         let mut inner = self.inner.lock().expect("Poisoned lock");
-        inner.db.set_episode_watch_status(episode, status)
-    }
-
-    pub fn get_watch_status(
-        &self,
-        show_id: &ShowId,
-    ) -> Result<HashMap<EpisodeId, NaiveDate>, db::GetWatchStatusError> {
-        let inner = self.inner.lock().expect("Poisoned lock");
-        inner.db.get_show_watch_status(show_id)
-    }
-
-    pub fn get_shows_by_watch_status(
-        &self,
-    ) -> Result<HashMap<ShowId, ShowWatchStatus>, GetShowWatchStatusError> {
-        let inner = self.inner.lock().expect("Poisoned lock");
-        let mut ret = HashMap::new();
-        let today = chrono::Local::now().date_naive();
-
-        for (show_id, _, _) in inner
-            .db
-            .get_shows()
-            .map_err(GetShowWatchStatusError::Shows)?
-        {
-            let watch_status = inner
-                .db
-                .get_show_watch_status(&show_id)
-                .map_err(GetShowWatchStatusError::WatchStatus)?;
-
-            if watch_status.is_empty() {
-                ret.insert(show_id, ShowWatchStatus::Unstarted);
-                continue;
-            }
-
-            let episodes = inner
-                .db
-                .get_episodes(&show_id)
-                .map_err(GetShowWatchStatusError::Episodes)?;
-
-            let aired_episodes: Vec<_> = episodes
-                .into_iter()
-                .filter(|(_id, epi)| {
-                    let airdate = match epi.airdate {
-                        Some(v) => v,
-                        None => return false,
-                    };
-                    airdate <= today
-                })
-                .collect();
-
-            if watch_status.len() >= aired_episodes.len() {
-                ret.insert(show_id, ShowWatchStatus::Finished);
-                continue;
-            }
-
-            ret.insert(show_id, ShowWatchStatus::InProgress);
-        }
-
-        Ok(ret)
+        inner.db.set_episode_watch_status(episode, status)?;
+        Ok(inner.db.get_episode(episode)?)
     }
 
     pub fn set_show_pause_status(
         &self,
-        show: &ShowId,
+        show_id: &ShowId,
         pause: bool,
-    ) -> Result<(), db::SetPauseError> {
+    ) -> Result<TvShow, SetPauseError> {
         let inner = self.inner.lock().expect("Poisoned lock");
-        inner.db.set_pause_status(show, pause)
-    }
-
-    pub fn get_paused_shows(&self) -> Result<HashSet<ShowId>, db::GetPausedShowError> {
-        let inner = self.inner.lock().expect("Poisoned lock");
-        inner.db.get_paused_shows()
+        inner.db.set_pause_status(show_id, pause)?;
+        Ok(inner.db.get_show(show_id, &today())?)
     }
 
     pub fn get_episodes_aired_between(
         &self,
         start_date: &NaiveDate,
         end_date: &NaiveDate,
-    ) -> Result<TvEpisodesList, db::GetAiredEpisodesError> {
-        let inner = self.inner.lock().expect("Poisoned lock");
+    ) -> Result<HashMap<EpisodeId, TvEpisode>, db::GetEpisodeError> {
+        let mut inner = self.inner.lock().expect("Poisoned lock");
         inner.db.get_episodes_aired_between(start_date, end_date)
     }
+}
+
+fn today() -> NaiveDate {
+    chrono::Local::now().date_naive()
 }

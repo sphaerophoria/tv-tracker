@@ -1,6 +1,6 @@
 "use strict";
 
-import { request_episodes, request_shows } from "./http.js";
+import { get_shows } from "./http.js";
 
 function sort_shows_by_name(shows) {
   shows.sort((a, b) => a[1].name.toLowerCase() > b[1].name.toLowerCase());
@@ -19,7 +19,7 @@ function render_shows(shows) {
 }
 
 async function init() {
-  let shows = await request_shows();
+  let shows = await get_shows();
 
   shows = Object.entries(shows);
   sort_shows_by_name(shows);

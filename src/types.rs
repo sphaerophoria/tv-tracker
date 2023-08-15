@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use std::collections::HashMap;
+use crate::tv_maze::TvMazeShowId;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct ImdbShowId(pub String);
@@ -8,8 +8,17 @@ pub struct ImdbShowId(pub String);
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq)]
 pub struct TvdbShowId(pub i64);
 
+#[derive(Serialize, Eq, PartialEq, Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowWatchStatus {
+    Finished,
+    Unstarted,
+    InProgress,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-pub struct TvShow {
+pub struct RemoteTvShow<RemoteId> {
+    pub id: RemoteId,
     pub name: String,
     pub image: Option<String>,
     pub year: Option<i32>,
@@ -19,7 +28,21 @@ pub struct TvShow {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-pub struct TvEpisode {
+pub struct TvShow {
+    pub id: ShowId,
+    pub remote_id: TvMazeShowId,
+    pub name: String,
+    pub image: Option<String>,
+    pub year: Option<i32>,
+    pub url: Option<String>,
+    pub imdb_id: Option<ImdbShowId>,
+    pub tvdb_id: Option<TvdbShowId>,
+    pub watch_status: ShowWatchStatus,
+    pub pause_status: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct RemoteEpisode {
     pub name: String,
     pub season: i64,
     pub episode: i64,
@@ -27,19 +50,18 @@ pub struct TvEpisode {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-pub struct TvShowEpisode {
+pub struct TvEpisode {
+    pub id: EpisodeId,
     pub show_id: ShowId,
-    pub episode: TvEpisode,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TvEpisodesList {
-    pub shows: HashMap<ShowId, TvShow>,
-    pub episodes: Vec<TvShowEpisode>,
+    pub name: String,
+    pub season: i64,
+    pub episode: i64,
+    pub airdate: Option<chrono::NaiveDate>,
+    pub watch_date: Option<chrono::NaiveDate>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct ShowId(pub i64);
 
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct EpisodeId(pub i64);

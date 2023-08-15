@@ -25,10 +25,10 @@ function handle_search_keypress(event) {
 }
 
 async function handle_add(item) {
-  const request = new Request("/add_show", {
+  const request = new Request("/shows", {
     method: "PUT",
     body: JSON.stringify({
-      id: item,
+      remote_id: item,
     }),
   });
   fetch(request);
@@ -37,17 +37,17 @@ async function handle_add(item) {
 function render_show(item) {
   let rendered = '<div class="show-card">';
 
-  if (item.show.url !== null) {
-    rendered += "<a href=" + item.show.url + ">";
+  if (item.url !== null) {
+    rendered += "<a href=" + item.url + ">";
   }
 
-  if (item.show.image !== null) {
-    rendered += '<img class="card-image" src=' + item.show.image + ">";
+  if (item.image !== null) {
+    rendered += '<img class="card-image" src=' + item.image + ">";
   } else {
     rendered += '<div class="card-placeholder-image"></div>';
   }
 
-  if (item.show.url !== null) {
+  if (item.url !== null) {
     rendered += "</a>";
   }
 

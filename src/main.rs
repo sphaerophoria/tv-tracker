@@ -1,3 +1,5 @@
+#![deny(clippy::unwrap_used)]
+
 use server::Server;
 use thiserror::Error;
 
@@ -108,8 +110,8 @@ fn main() {
         }
     };
 
-    let db = Db::new(&args.db_path).unwrap();
+    let db = Db::new(&args.db_path).expect("Failed to create db");
     let app = App::new(db);
-    let server = Server::new(args.html_path.as_deref(), app).unwrap();
-    futures::executor::block_on(server.serve(args.port)).unwrap();
+    let server = Server::new(args.html_path.as_deref(), app).expect("Failed to create server");
+    futures::executor::block_on(server.serve(args.port)).expect("Failed to run server");
 }

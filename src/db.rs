@@ -1,7 +1,8 @@
 use crate::{
     tv_maze::TvMazeShowId,
     types::{
-        EpisodeId, ImdbShowId, ShowId, TvEpisode, TvEpisodesList, TvShow, TvShowEpisode, TvdbShowId,
+        EpisodeId, ImdbShowId, RemoteEpisode, RemoteTvShow, ShowId, ShowWatchStatus, TvEpisode,
+        TvShow, TvdbShowId,
     },
 };
 
@@ -33,8 +34,16 @@ pub enum DbCreationError {
 }
 
 #[derive(Debug, Error)]
-#[error("failed to add show to db")]
-pub struct AddShowError(#[source] rusqlite::Error);
+pub enum AddShowError {
+    #[error("failed to insert show")]
+    Insert(#[source] rusqlite::Error),
+    #[error("failed to start transaction")]
+    StartTransaction(#[source] rusqlite::Error),
+    #[error("failed to get inserted show")]
+    GetShow(#[from] GetShowError),
+    #[error("failed to commit transaction")]
+    CommitTransaction(#[source] rusqlite::Error),
+}
 
 #[derive(Debug, Error)]
 pub enum RemoveShowError {
@@ -64,8 +73,8 @@ pub enum GetShowError {
     GetRow(#[source] rusqlite::Error),
     #[error("failed to get id")]
     GetId(#[source] rusqlite::Error),
-    #[error("failed to get tv maze id")]
-    GetTvMazeId(#[source] rusqlite::Error),
+    #[error("failed to get remote id")]
+    GetRemoteId(#[source] rusqlite::Error),
     #[error("failed to get name")]
     GetName(#[source] rusqlite::Error),
     #[error("failed to get year")]
@@ -78,8 +87,12 @@ pub enum GetShowError {
     GetImageUrl(#[source] rusqlite::Error),
     #[error("failed to get tvmaze url")]
     GetTvMazeUrl(#[source] rusqlite::Error),
-    #[error("missing id")]
-    MissingId,
+    #[error("failed to get pause status")]
+    GetPauseStatus(#[source] rusqlite::Error),
+    #[error("failed to get watch count")]
+    GetWatchCount(#[source] rusqlite::Error),
+    #[error("incorrect number of elements returned")]
+    IncorrectLen,
 }
 
 #[derive(Debug, Error)]
@@ -99,6 +112,8 @@ pub enum GetEpisodeError {
     Prepare(#[source] rusqlite::Error),
     #[error("failed to execute get show request")]
     Execute(#[source] rusqlite::Error),
+    #[error("failed to get row from query")]
+    GetRow(#[source] rusqlite::Error),
     #[error("failed to get episode id")]
     GetId(#[source] rusqlite::Error),
     #[error("failed to get show id for episode")]
@@ -111,8 +126,12 @@ pub enum GetEpisodeError {
     GetEpisode(#[source] rusqlite::Error),
     #[error("failed to get airdate")]
     GetAirdate(#[source] rusqlite::Error),
+    #[error("failed to get watch date")]
+    GetWatchdate(#[source] rusqlite::Error),
     #[error("failed to parse airdate")]
     InvalidDate,
+    #[error("query returned wrong number of results")]
+    IncorrectLen,
 }
 
 #[derive(Debug, Error)]
@@ -132,40 +151,29 @@ pub enum FindEpisodeError {
 pub struct SetWatchStatusError(#[source] rusqlite::Error);
 
 #[derive(Debug, Error)]
-pub enum GetWatchStatusError {
-    #[error("failed to prepare get watch status")]
-    Prepare(#[source] rusqlite::Error),
-    #[error("failed to execute get watch status")]
-    Execute(#[source] rusqlite::Error),
-    #[error("failed to get id of returned row")]
-    GetId(#[source] rusqlite::Error),
-    #[error("failed to get watch date")]
-    GetDate(#[source] rusqlite::Error),
-    #[error("invalid watch date")]
-    InvalidDate,
-}
-
-#[derive(Debug, Error)]
 #[error("failed to set pause status")]
 pub struct SetPauseError(#[source] rusqlite::Error);
 
-#[derive(Debug, Error)]
-pub enum GetPausedShowError {
-    #[error("failed to prepare pause statement")]
-    Prepare(#[source] rusqlite::Error),
-    #[error("failed to execute pause statement")]
-    Execute(#[source] rusqlite::Error),
-    #[error("failed to parse show id")]
-    Parse(#[source] rusqlite::Error),
-}
+const GET_SHOWS_QUERY: &str =
+    "
+    SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_url, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, watch_count.count, epi_count.count, paused_shows.show_id FROM shows
+    LEFT JOIN
+        (
+            SELECT show_id, COUNT(*) as count FROM episodes
+            WHERE episodes.airdate <= ?1
+            GROUP BY show_id
 
-#[derive(Debug, Error)]
-pub enum GetAiredEpisodesError {
-    #[error("failed to get episodes")]
-    GetEpisodes(#[from] GetEpisodeError),
-    #[error("failed to get shows for episodes")]
-    GetShows(#[from] GetShowError),
-}
+        ) as epi_count
+        ON shows.id = epi_count.show_id
+    LEFT JOIN
+        (
+            SELECT show_id, COUNT(*) as count FROM watch_status
+            LEFT JOIN episodes WHERE episodes.id = watch_status.episode_id
+            GROUP BY show_id
+        ) as watch_count
+        ON shows.id = watch_count.show_id
+    LEFT JOIN paused_shows ON shows.id = paused_shows.show_id
+    ";
 
 pub struct Db {
     connection: Connection,
@@ -189,12 +197,12 @@ impl Db {
         Ok(Db { connection })
     }
 
-    pub fn add_show(
-        &mut self,
-        show: &TvShow,
-        tvmaze_id: &TvMazeShowId,
-    ) -> Result<ShowId, AddShowError> {
-        self.connection
+    pub fn add_show(&mut self, show: &RemoteTvShow<TvMazeShowId>) -> Result<ShowId, AddShowError> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(AddShowError::StartTransaction)?;
+        transaction
             .execute(
                 "
             INSERT INTO shows(name, tvmaze_id, year, imdb_id, tvdb_id, image_url, tvmaze_url)
@@ -202,7 +210,7 @@ impl Db {
             ",
                 params![
                     show.name,
-                    tvmaze_id.0,
+                    show.id.0,
                     show.year,
                     show.imdb_id.as_ref().map(|x| x.0.clone()),
                     show.tvdb_id.map(|x| x.0),
@@ -210,9 +218,13 @@ impl Db {
                     show.url
                 ],
             )
-            .map_err(AddShowError)?;
+            .map_err(AddShowError::Insert)?;
 
-        Ok(ShowId(self.connection.last_insert_rowid()))
+        let last_show_id = ShowId(transaction.last_insert_rowid());
+        transaction
+            .commit()
+            .map_err(AddShowError::CommitTransaction)?;
+        Ok(last_show_id)
     }
 
     pub fn remove_show(&mut self, show: &ShowId) -> Result<(), RemoveShowError> {
@@ -245,7 +257,7 @@ impl Db {
             .map_err(RemoveShowError::RemoveShow)?;
 
         transaction
-            .execute("PRAGMA foreign_key_check", [])
+            .execute_batch("PRAGMA foreign_key_check")
             .map_err(RemoveShowError::ForeignKeyCheck)?;
 
         transaction
@@ -255,13 +267,19 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_shows(&self) -> Result<Vec<(ShowId, TvMazeShowId, TvShow)>, GetShowError> {
+    pub fn get_show(&self, id: &ShowId, today: &NaiveDate) -> Result<TvShow, GetShowError> {
+        get_show_with_connection(&self.connection, id, today)
+    }
+
+    pub fn get_shows(&self, today: &NaiveDate) -> Result<Vec<TvShow>, GetShowError> {
         let mut statement = self
             .connection
-            .prepare("SELECT * FROM shows")
+            .prepare(GET_SHOWS_QUERY)
             .map_err(GetShowError::Prepare)?;
 
-        let mut rows = statement.query([]).map_err(GetShowError::Execute)?;
+        let mut rows = statement
+            .query([today.num_days_from_ce()])
+            .map_err(GetShowError::Execute)?;
         let mut ret = Vec::new();
 
         loop {
@@ -272,25 +290,24 @@ impl Db {
                 None => break,
             };
 
-            let id = row.get(0).map_err(GetShowError::GetId)?;
-            let id = ShowId(id);
-
-            let tvmaze_id: i64 = row.get(2).map_err(GetShowError::GetTvMazeId)?;
-            let tvmaze_id = TvMazeShowId(tvmaze_id);
-
             let show = show_from_row_indices(
                 row,
                 ShowIndices {
-                    name: 1,
-                    image: 6,
-                    year: 3,
-                    url: 7,
-                    imdb_id: 4,
-                    tvdb_id: 5,
+                    id: 0,
+                    remote_id: 1,
+                    name: 2,
+                    image: 3,
+                    year: 4,
+                    url: 5,
+                    imdb_id: 6,
+                    tvdb_id: 7,
+                    episodes_watched: 8,
+                    num_episodes: 9,
+                    pause_status: 10,
                 },
             )?;
 
-            ret.push((id, tvmaze_id, show));
+            ret.push(show);
         }
 
         Ok(ret)
@@ -299,7 +316,7 @@ impl Db {
     fn find_episode(
         &mut self,
         show_id: &ShowId,
-        episode: &TvEpisode,
+        episode: &RemoteEpisode,
     ) -> Result<Option<EpisodeId>, FindEpisodeError> {
         let mut statement = self
             .connection
@@ -322,7 +339,7 @@ impl Db {
     pub fn add_episode(
         &mut self,
         show_id: &ShowId,
-        episode: &TvEpisode,
+        episode: &RemoteEpisode,
     ) -> Result<EpisodeId, AddEpisodeError> {
         let episode_id = self
             .find_episode(show_id, episode)
@@ -369,13 +386,44 @@ impl Db {
         }
     }
 
-    pub fn get_episodes(
+    pub fn get_episode(&self, episode_id: &EpisodeId) -> Result<TvEpisode, GetEpisodeError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, show_id, name, season, episode, airdate, watch_date FROM episodes LEFT JOIN watch_status ON episodes.id = watch_status.episode_id WHERE id = ?1")
+            .map_err(GetEpisodeError::Prepare)?;
+
+        let mut rows = statement
+            .query([episode_id.0])
+            .map_err(GetEpisodeError::Execute)?;
+
+        let row = match rows.next().map_err(GetEpisodeError::GetRow)? {
+            Some(v) => v,
+            None => return Err(GetEpisodeError::IncorrectLen),
+        };
+
+        let episode = episode_from_row_indices(
+            row,
+            EpisodeIndices {
+                id: 0,
+                show_id: 1,
+                name: 2,
+                season: 3,
+                episode: 4,
+                airdate: 5,
+                watch_date: 6,
+            },
+        )?;
+
+        Ok(episode)
+    }
+
+    pub fn get_episodes_for_show(
         &self,
         show: &ShowId,
     ) -> Result<HashMap<EpisodeId, TvEpisode>, GetEpisodeError> {
         let mut statement = self
             .connection
-            .prepare("SELECT id, name, season, episode, airdate FROM episodes WHERE show_id = ?1")
+            .prepare("SELECT id, show_id, name, season, episode, airdate, watch_date FROM episodes LEFT JOIN watch_status ON episodes.id = watch_status.episode_id WHERE show_id = ?1")
             .map_err(GetEpisodeError::Prepare)?;
 
         let mut rows = statement
@@ -385,20 +433,20 @@ impl Db {
         let mut ret = HashMap::new();
 
         while let Ok(Some(row)) = rows.next() {
-            let id = row.get(0).map_err(GetEpisodeError::GetId)?;
-            let id = EpisodeId(id);
-
             let episode = episode_from_row_indices(
                 row,
                 EpisodeIndices {
-                    name: 1,
-                    season: 2,
-                    episode: 3,
-                    airdate: 4,
+                    id: 0,
+                    show_id: 1,
+                    name: 2,
+                    season: 3,
+                    episode: 4,
+                    airdate: 5,
+                    watch_date: 6,
                 },
             )?;
 
-            ret.insert(id, episode);
+            ret.insert(episode.id, episode);
         }
 
         Ok(ret)
@@ -407,7 +455,7 @@ impl Db {
     pub fn set_episode_watch_status(
         &mut self,
         episode: &EpisodeId,
-        watched: Option<NaiveDate>,
+        watched: &Option<NaiveDate>,
     ) -> Result<(), SetWatchStatusError> {
         if let Some(date) = watched {
             self.connection
@@ -432,42 +480,6 @@ impl Db {
         }
 
         Ok(())
-    }
-
-    pub fn get_show_watch_status(
-        &self,
-        show: &ShowId,
-    ) -> Result<HashMap<EpisodeId, NaiveDate>, GetWatchStatusError> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "
-                SELECT episode_id, watch_date
-                FROM watch_status
-                LEFT JOIN episodes ON watch_status.episode_id = episodes.id
-                WHERE episodes.show_id = ?1
-                ",
-            )
-            .map_err(GetWatchStatusError::Prepare)?;
-
-        let mut rows = statement
-            .query([show.0])
-            .map_err(GetWatchStatusError::Execute)?;
-
-        let mut ret = HashMap::new();
-
-        while let Ok(Some(row)) = rows.next() {
-            let id = row.get(0).map_err(GetWatchStatusError::GetId)?;
-            let id = EpisodeId(id);
-
-            let date = row.get(1).map_err(GetWatchStatusError::GetDate)?;
-            let date = NaiveDate::from_num_days_from_ce_opt(date)
-                .ok_or(GetWatchStatusError::InvalidDate)?;
-
-            ret.insert(id, date);
-        }
-
-        Ok(ret)
     }
 
     pub fn set_pause_status(&self, show: &ShowId, paused: bool) -> Result<(), SetPauseError> {
@@ -495,32 +507,19 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_paused_shows(&self) -> Result<HashSet<ShowId>, GetPausedShowError> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT show_id FROM paused_shows")
-            .map_err(GetPausedShowError::Prepare)?;
-
-        let mut rows = statement.query([]).map_err(GetPausedShowError::Execute)?;
-
-        let mut ret = HashSet::new();
-        while let Ok(Some(row)) = rows.next() {
-            ret.insert(ShowId(row.get(0).map_err(GetPausedShowError::Parse)?));
-        }
-
-        Ok(ret)
-    }
-
     pub fn get_episodes_aired_between(
-        &self,
+        &mut self,
         start_date: &NaiveDate,
         end_date: &NaiveDate,
-    ) -> Result<TvEpisodesList, GetAiredEpisodesError> {
+    ) -> Result<HashMap<EpisodeId, TvEpisode>, GetEpisodeError> {
+        let mut ret = HashMap::new();
+
         let mut statement = self
             .connection
             .prepare(
                 "
-                SELECT show_id, name, season, episode, airdate FROM episodes
+                SELECT id, show_id, name, season, episode, airdate, watch_date FROM episodes
+                LEFT JOIN watch_status on episodes.id = watch_status.episode_id
                 WHERE airdate IS NOT NULL AND airdate >= ?1 AND airdate <= ?2
                 ",
             )
@@ -530,69 +529,21 @@ impl Db {
             .query([start_date.num_days_from_ce(), end_date.num_days_from_ce()])
             .map_err(GetEpisodeError::Execute)?;
 
-        let mut show_ids = HashSet::new();
-        let mut ret = TvEpisodesList {
-            shows: Default::default(),
-            episodes: Default::default(),
-        };
-
         while let Ok(Some(row)) = rows.next() {
-            let show_id: i64 = row.get(0).map_err(GetEpisodeError::GetShowId)?;
-            let show_id = ShowId(show_id);
             let episode = episode_from_row_indices(
                 row,
                 EpisodeIndices {
-                    name: 1,
-                    season: 2,
-                    episode: 3,
-                    airdate: 4,
+                    id: 0,
+                    show_id: 1,
+                    name: 2,
+                    season: 3,
+                    episode: 4,
+                    airdate: 5,
+                    watch_date: 6,
                 },
             )?;
 
-            show_ids.insert(show_id);
-
-            ret.episodes.push(TvShowEpisode { show_id, episode });
-        }
-
-        // AFAICT, this is the easiest way to inject the show IDs retrieved from the previous step,
-        // happy to be proven wrong
-        let query_str = format!(
-            "
-            SELECT id, name, image_url, year, tvmaze_url, imdb_id, tvdb_id FROM shows
-            WHERE id IN ({})
-            ",
-            show_ids_to_comma_separated(&show_ids)
-        );
-        let mut statement = self
-            .connection
-            .prepare(&query_str)
-            .map_err(GetShowError::Prepare)?;
-
-        let mut rows = statement.query([]).map_err(GetShowError::Execute)?;
-
-        while let Ok(Some(row)) = rows.next() {
-            let show_id: i64 = row.get(0).map_err(GetShowError::GetId)?;
-            let show_id = ShowId(show_id);
-
-            let show = show_from_row_indices(
-                row,
-                ShowIndices {
-                    name: 1,
-                    image: 2,
-                    year: 3,
-                    url: 4,
-                    imdb_id: 5,
-                    tvdb_id: 6,
-                },
-            )?;
-
-            ret.shows.insert(show_id, show);
-        }
-
-        for show_id in show_ids {
-            if !ret.shows.contains_key(&show_id) {
-                return Err(GetShowError::MissingId.into());
-            }
+            ret.insert(episode.id, episode);
         }
 
         Ok(ret)
@@ -618,17 +569,93 @@ fn show_ids_to_comma_separated(show_ids: &HashSet<ShowId>) -> String {
     ret
 }
 
+fn get_show_with_connection(
+    connection: &Connection,
+    id: &ShowId,
+    today: &NaiveDate,
+) -> Result<TvShow, GetShowError> {
+    let mut filter_ids = HashSet::new();
+    filter_ids.insert(*id);
+    let mut ret = get_shows_with_filter(connection, today, Some(filter_ids))?;
+
+    if ret.len() != 1 {
+        return Err(GetShowError::IncorrectLen);
+    }
+
+    Ok(ret.pop().expect("Inserted show does not exist"))
+}
+
+fn get_shows_with_filter(
+    connection: &Connection,
+    today: &NaiveDate,
+    show_ids: Option<HashSet<ShowId>>,
+) -> Result<Vec<TvShow>, GetShowError> {
+    let mut query_str = GET_SHOWS_QUERY.to_string();
+
+    // AFAICT, this is the easiest way to inject the show IDs retrieved from the previous step,
+    // happy to be proven wrong
+    if let Some(show_ids) = show_ids {
+        query_str.push_str(&format!(
+            "WHERE shows.id IN ({})",
+            show_ids_to_comma_separated(&show_ids)
+        ));
+    }
+
+    let mut statement = connection
+        .prepare(&query_str)
+        .map_err(GetShowError::Prepare)?;
+
+    let mut rows = statement
+        .query([today.num_days_from_ce()])
+        .map_err(GetShowError::Execute)?;
+    let mut ret = Vec::new();
+
+    while let Some(row) = rows.next().map_err(GetShowError::GetRow)? {
+        let show = show_from_row_indices(
+            row,
+            ShowIndices {
+                id: 0,
+                remote_id: 1,
+                name: 2,
+                image: 3,
+                year: 4,
+                url: 5,
+                imdb_id: 6,
+                tvdb_id: 7,
+                episodes_watched: 8,
+                num_episodes: 9,
+                pause_status: 10,
+            },
+        )?;
+
+        ret.push(show);
+    }
+
+    Ok(ret)
+}
+
 struct EpisodeIndices {
+    id: usize,
+    show_id: usize,
     name: usize,
     season: usize,
     episode: usize,
     airdate: usize,
+    watch_date: usize,
 }
 
 fn episode_from_row_indices(
     row: &Row,
     indices: EpisodeIndices,
 ) -> Result<TvEpisode, GetEpisodeError> {
+    let id = row.get(indices.id).map_err(GetEpisodeError::GetId)?;
+    let id = EpisodeId(id);
+
+    let show_id = row
+        .get(indices.show_id)
+        .map_err(GetEpisodeError::GetShowId)?;
+    let show_id = ShowId(show_id);
+
     let name = row.get(indices.name).map_err(GetEpisodeError::GetName)?;
 
     let season = row
@@ -640,6 +667,7 @@ fn episode_from_row_indices(
     let airdate: Option<i32> = row
         .get(indices.airdate)
         .map_err(GetEpisodeError::GetAirdate)?;
+
     let airdate = match airdate {
         Some(v) => {
             Some(NaiveDate::from_num_days_from_ce_opt(v).ok_or(GetEpisodeError::InvalidDate)?)
@@ -647,24 +675,50 @@ fn episode_from_row_indices(
         None => None,
     };
 
+    let watch_date: Option<i32> = row
+        .get(indices.watch_date)
+        .map_err(GetEpisodeError::GetWatchdate)?;
+    let watch_date = match watch_date {
+        Some(v) => {
+            Some(NaiveDate::from_num_days_from_ce_opt(v).ok_or(GetEpisodeError::InvalidDate)?)
+        }
+        None => None,
+    };
+
     Ok(TvEpisode {
+        id,
+        show_id,
         name,
         season,
         episode,
         airdate,
+        watch_date,
     })
 }
 
 struct ShowIndices {
+    id: usize,
+    remote_id: usize,
     name: usize,
     image: usize,
     year: usize,
     url: usize,
     imdb_id: usize,
     tvdb_id: usize,
+    episodes_watched: usize,
+    num_episodes: usize,
+    pause_status: usize,
 }
 
 fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetShowError> {
+    let id = row.get(indices.id).map_err(GetShowError::GetId)?;
+    let id = ShowId(id);
+
+    let remote_id = row
+        .get(indices.remote_id)
+        .map_err(GetShowError::GetRemoteId)?;
+    let remote_id = TvMazeShowId(remote_id);
+
     let name = row.get(indices.name).map_err(GetShowError::GetName)?;
 
     let year = row.get(indices.year).map_err(GetShowError::GetYear)?;
@@ -677,13 +731,40 @@ fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetS
     let image = row.get(indices.image).map_err(GetShowError::GetImageUrl)?;
     let url = row.get(indices.url).map_err(GetShowError::GetTvMazeUrl)?;
 
+    let watch_count: Option<i64> = row
+        .get(indices.episodes_watched)
+        .map_err(GetShowError::GetWatchCount)?;
+    let watch_count = watch_count.unwrap_or(0);
+
+    let num_episodes: Option<i64> = row
+        .get(indices.num_episodes)
+        .map_err(GetShowError::GetWatchCount)?;
+    let num_episodes = num_episodes.unwrap_or(0);
+
+    let pause_status: Option<i64> = row
+        .get(indices.pause_status)
+        .map_err(GetShowError::GetPauseStatus)?;
+    let pause_status = pause_status.is_some();
+
+    let watch_status = if watch_count == num_episodes {
+        ShowWatchStatus::Finished
+    } else if watch_count == 0 {
+        ShowWatchStatus::Unstarted
+    } else {
+        ShowWatchStatus::InProgress
+    };
+
     Ok(TvShow {
+        id,
+        remote_id,
         name,
         year,
         imdb_id,
         tvdb_id,
         image,
         url,
+        watch_status,
+        pause_status,
     })
 }
 
@@ -818,9 +899,55 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
 mod test {
     use super::*;
 
+    fn generate_empty_show(name: &str, id: i64) -> RemoteTvShow<TvMazeShowId> {
+        RemoteTvShow {
+            id: TvMazeShowId(id),
+            name: name.to_string(),
+            image: None,
+            year: None,
+            url: None,
+            imdb_id: None,
+            tvdb_id: None,
+        }
+    }
+
+    fn remote_from_tv_show(show: &TvShow) -> RemoteTvShow<TvMazeShowId> {
+        RemoteTvShow {
+            id: show.remote_id.clone(),
+            name: show.name.clone(),
+            year: show.year.clone(),
+            url: show.url.clone(),
+            image: show.image.clone(),
+            imdb_id: show.imdb_id.clone(),
+            tvdb_id: show.tvdb_id.clone(),
+        }
+    }
+
+    fn remote_from_tv_episode(show: &TvEpisode) -> RemoteEpisode {
+        RemoteEpisode {
+            name: show.name.clone(),
+            season: show.season.clone(),
+            episode: show.episode.clone(),
+            airdate: show.airdate.clone(),
+        }
+    }
+
+    fn gen_date(num_days_since_ce: i32) -> NaiveDate {
+        NaiveDate::from_num_days_from_ce_opt(num_days_since_ce).expect("Failed to generate date")
+    }
+
+    fn find_show(id: ShowId, shows: &[TvShow]) -> TvShow {
+        shows
+            .iter()
+            .find(|show| show.id == id)
+            .expect("Failed to find show")
+            .clone()
+    }
+
     #[test]
     fn test_full_show_in_out() {
-        let show = TvShow {
+        let show = RemoteTvShow {
+            id: TvMazeShowId(0),
             name: "Test Show".to_string(),
             image: Some("test_url".to_string()),
             year: Some(1234),
@@ -831,94 +958,62 @@ mod test {
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
 
-        let id = db
-            .add_show(&show, &TvMazeShowId(0))
-            .expect("Failed to add show");
-        let retrieved_shows = db.get_shows().expect("Failed to get show");
+        let show_id = db.add_show(&show).expect("Failed to add show");
+
+        let inserted_show = db
+            .get_show(&show_id, &gen_date(1234))
+            .expect("Failed to get show");
+        assert_eq!(remote_from_tv_show(&inserted_show), show);
+
+        let retrieved_shows = db.get_shows(&gen_date(1234)).expect("Failed to get show");
 
         assert_eq!(retrieved_shows.len(), 1);
-        assert_eq!(retrieved_shows[0].0, id);
-        assert_eq!(retrieved_shows[0].1, TvMazeShowId(0));
-        assert_eq!(retrieved_shows[0].2, show);
+        assert_eq!(find_show(show_id, &retrieved_shows), inserted_show);
     }
 
     #[test]
     fn test_empty_show_in_out() {
-        let show = TvShow {
-            name: "Test Show".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
+        let show = generate_empty_show("Test Show", 0);
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
 
-        let id = db
-            .add_show(&show, &TvMazeShowId(0))
-            .expect("Failed to add show");
-        let retrieved_shows = db.get_shows().expect("Failed to get show");
+        let show_id = db.add_show(&show).expect("Failed to add show");
+
+        let inserted_show = db
+            .get_show(&show_id, &gen_date(1234))
+            .expect("Failed to get show");
+        assert_eq!(remote_from_tv_show(&inserted_show), show);
+
+        let retrieved_shows = db.get_shows(&gen_date(1234)).expect("Failed to get show");
 
         assert_eq!(retrieved_shows.len(), 1);
-        assert_eq!(retrieved_shows[0].0, id);
-        assert_eq!(retrieved_shows[0].1, TvMazeShowId(0));
-        assert_eq!(retrieved_shows[0].2, show);
+        assert_eq!(find_show(show_id, &retrieved_shows), inserted_show);
     }
 
     #[test]
     fn test_get_shows() {
-        let show = TvShow {
-            name: "Test Show".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
-
-        let show2 = TvShow {
-            name: "Test Show 2".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
+        let show = generate_empty_show("Test Show", 0);
+        let show2 = generate_empty_show("Test show 2", 1);
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
 
-        let id = db
-            .add_show(&show, &TvMazeShowId(0))
-            .expect("Failed to add show");
-        let id2 = db
-            .add_show(&show2, &TvMazeShowId(1))
-            .expect("Failed to add show");
+        let show_id1 = db.add_show(&show).expect("Failed to add show");
+        let show_id2 = db.add_show(&show2).expect("Failed to add show");
 
-        let shows = db.get_shows().expect("Failed to get shows");
-        let shows = shows
-            .into_iter()
-            .map(|(id, tvmaze_id, show)| (id, (tvmaze_id, show)))
-            .collect::<HashMap<_, _>>();
+        let shows = db.get_shows(&gen_date(1234)).expect("Failed to get shows");
+
         assert_eq!(shows.len(), 2);
-        assert_eq!(shows[&id].0, TvMazeShowId(0));
-        assert_eq!(shows[&id].1, show);
-        assert_eq!(shows[&id2].0, TvMazeShowId(1));
-        assert_eq!(shows[&id2].1, show2);
+        assert_eq!(find_show(show_id1, &shows).remote_id, TvMazeShowId(0));
+        assert_eq!(remote_from_tv_show(&find_show(show_id1, &shows)), show);
+        assert_eq!(find_show(show_id2, &shows).remote_id, TvMazeShowId(1));
+        assert_eq!(remote_from_tv_show(&find_show(show_id2, &shows)), show2);
     }
 
     #[test]
     fn test_episode_in_out() {
-        let show = TvShow {
-            name: "Test Show".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
+        let show = generate_empty_show("Test Show", 0);
 
-        let episode = TvEpisode {
+        let episode = RemoteEpisode {
             name: "Test Episode".to_string(),
             season: 1,
             episode: 34,
@@ -927,39 +1022,33 @@ mod test {
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
 
-        let show_id = db
-            .add_show(&show, &TvMazeShowId(0))
-            .expect("Failed to add show");
+        let show_id = db.add_show(&show).expect("Failed to add show");
 
         let id = db
             .add_episode(&show_id, &episode)
             .expect("Failed to add episode");
 
-        let retrieved_episodes = db.get_episodes(&show_id).expect("Failed to get episodes");
+        let retrieved_episodes = db
+            .get_episodes_for_show(&show_id)
+            .expect("Failed to get episodes");
 
         assert_eq!(retrieved_episodes.len(), 1);
-        assert_eq!(retrieved_episodes[&id], episode);
+        assert_eq!(remote_from_tv_episode(&retrieved_episodes[&id]), episode);
+        assert_eq!(retrieved_episodes[&id].show_id, show_id);
     }
 
     #[test]
     fn test_update_episode() {
-        let show = TvShow {
-            name: "Test Show".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
+        let show = generate_empty_show("Test Show", 0);
 
-        let episode = TvEpisode {
+        let episode = RemoteEpisode {
             name: "Test Episode".to_string(),
             season: 1,
             episode: 34,
             airdate: NaiveDate::from_num_days_from_ce_opt(1023),
         };
 
-        let episode_update = TvEpisode {
+        let episode_update = RemoteEpisode {
             name: "Test Episode updated".to_string(),
             season: 1,
             episode: 34,
@@ -968,9 +1057,7 @@ mod test {
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
 
-        let show_id = db
-            .add_show(&show, &TvMazeShowId(0))
-            .expect("Failed to add show");
+        let show_id = db.add_show(&show).expect("Failed to add show");
 
         let id = db
             .add_episode(&show_id, &episode)
@@ -979,31 +1066,29 @@ mod test {
         db.add_episode(&show_id, &episode_update)
             .expect("Failed to add episode");
 
-        let retrieved_episodes = db.get_episodes(&show_id).expect("Failed to get episodes");
+        let retrieved_episodes = db
+            .get_episodes_for_show(&show_id)
+            .expect("Failed to get episodes");
 
         assert_eq!(retrieved_episodes.len(), 1);
-        assert_eq!(retrieved_episodes[&id], episode_update);
+        assert_eq!(
+            remote_from_tv_episode(&retrieved_episodes[&id]),
+            episode_update
+        );
     }
 
     #[test]
     fn test_set_watch_status() {
-        let show = TvShow {
-            name: "Test Show".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
+        let show = generate_empty_show("Test Show", 0);
 
-        let episode = TvEpisode {
+        let episode = RemoteEpisode {
             name: "Test Episode".to_string(),
             season: 1,
             episode: 34,
             airdate: NaiveDate::from_num_days_from_ce_opt(1023),
         };
 
-        let episode2 = TvEpisode {
+        let episode2 = RemoteEpisode {
             name: "Test Episode 2".to_string(),
             season: 1,
             episode: 35,
@@ -1012,9 +1097,7 @@ mod test {
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
 
-        let show_id = db
-            .add_show(&show, &TvMazeShowId(0))
-            .expect("Failed to add show");
+        let show_id = db.add_show(&show).expect("Failed to add show");
 
         let episode_id = db
             .add_episode(&show_id, &episode)
@@ -1025,82 +1108,59 @@ mod test {
 
         let watch_date = NaiveDate::from_num_days_from_ce_opt(1024).expect("Invalid date");
 
-        db.set_episode_watch_status(&episode_id, Some(watch_date))
+        db.set_episode_watch_status(&episode_id, &Some(watch_date))
             .expect("Failed to set watch status");
 
-        let retrieved_episodes = db
-            .get_show_watch_status(&show_id)
-            .expect("Failed to get episodes");
+        let retrieved_episode = db.get_episode(&episode_id).expect("Failed to get episodes");
 
-        assert_eq!(retrieved_episodes.len(), 1);
-        assert_eq!(retrieved_episodes[&episode_id], watch_date);
+        assert_eq!(retrieved_episode.watch_date, Some(watch_date));
 
-        db.set_episode_watch_status(&episode_id, None)
+        db.set_episode_watch_status(&episode_id, &None)
             .expect("Failed to set watch status");
 
-        let retrieved_episodes = db
-            .get_show_watch_status(&show_id)
-            .expect("Failed to get episodes");
+        let retrieved_episode = db.get_episode(&episode_id).expect("Failed to get episodes");
 
-        assert_eq!(retrieved_episodes.len(), 0);
+        assert_eq!(retrieved_episode.watch_date, None);
     }
 
     #[test]
     fn test_set_pause_status() {
-        let show = TvShow {
-            name: "Test Show".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
-
-        let show2 = TvShow {
-            name: "Test Show 2".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
+        let show = generate_empty_show("Test Show", 0);
+        let show2 = generate_empty_show("Test Show 2", 1);
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
 
-        let id = db
-            .add_show(&show, &TvMazeShowId(0))
-            .expect("Failed to add show");
-        db.add_show(&show2, &TvMazeShowId(1))
-            .expect("Failed to add show");
+        let show_id1 = db.add_show(&show).expect("Failed to add show");
+        let show_id2 = db.add_show(&show2).expect("Failed to add show");
 
-        db.set_pause_status(&id, false)
+        let shows = db.get_shows(&gen_date(1234)).expect("Failed to get shows");
+        assert_eq!(find_show(show_id1, &shows).pause_status, false);
+        assert_eq!(find_show(show_id2, &shows).pause_status, false);
+
+        db.set_pause_status(&show_id1, false)
             .expect("Failed to set pause");
-        let paused = db.get_paused_shows().expect("Failed to get shows");
-        assert_eq!(paused.len(), 0);
+        let shows = db.get_shows(&gen_date(1234)).expect("Failed to get shows");
+        assert_eq!(find_show(show_id1, &shows).pause_status, false);
+        assert_eq!(find_show(show_id2, &shows).pause_status, false);
 
-        db.set_pause_status(&id, true).expect("Failed to set pause");
-        let paused = db.get_paused_shows().expect("Failed to get shows");
-        assert_eq!(paused.len(), 1);
-        assert!(paused.contains(&id));
-
-        db.set_pause_status(&id, false)
+        db.set_pause_status(&show_id1, true)
             .expect("Failed to set pause");
-        let paused = db.get_paused_shows().expect("Failed to get shows");
-        assert_eq!(paused.len(), 0);
+        let shows = db.get_shows(&gen_date(1234)).expect("Failed to get shows");
+        assert_eq!(find_show(show_id1, &shows).pause_status, true);
+        assert_eq!(find_show(show_id2, &shows).pause_status, false);
+
+        db.set_pause_status(&show_id1, false)
+            .expect("Failed to set pause");
+        let shows = db.get_shows(&gen_date(1234)).expect("Failed to get shows");
+        assert_eq!(find_show(show_id1, &shows).pause_status, false);
+        assert_eq!(find_show(show_id2, &shows).pause_status, false);
     }
 
     #[test]
     fn test_remove_show() {
-        let show = TvShow {
-            name: "Test Show".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
+        let show = generate_empty_show("Test Show", 0);
 
-        let episode = TvEpisode {
+        let episode = RemoteEpisode {
             name: "Test Episode".to_string(),
             season: 1,
             episode: 34,
@@ -1109,91 +1169,50 @@ mod test {
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
 
-        let id = db
-            .add_show(&show, &TvMazeShowId(0))
-            .expect("Failed to add show");
+        let show_id = db.add_show(&show).expect("Failed to add show");
 
-        db.set_pause_status(&id, true).expect("Failed to set pause");
+        db.set_pause_status(&show_id, true)
+            .expect("Failed to set pause");
 
         let episode_id = db
-            .add_episode(&id, &episode)
+            .add_episode(&show_id, &episode)
             .expect("Failed to add episode");
 
         let watch_date = NaiveDate::from_num_days_from_ce_opt(1024).expect("Invalid date");
 
-        db.set_episode_watch_status(&episode_id, Some(watch_date))
+        db.set_episode_watch_status(&episode_id, &Some(watch_date))
             .expect("Failed to set watch status");
 
-        let paused = db.get_paused_shows().expect("Failed to get shows");
-        assert_eq!(paused.len(), 1);
-
-        let episodes = db.get_episodes(&id).expect("Failed to get episodes");
+        let episodes = db
+            .get_episodes_for_show(&show_id)
+            .expect("Failed to get episodes");
         assert_eq!(episodes.len(), 1);
 
-        let watched = db
-            .get_show_watch_status(&id)
-            .expect("Failed to get watch status");
-        assert_eq!(watched.len(), 1);
+        db.remove_show(&show_id).expect("Failed to remove show");
 
-        db.remove_show(&id).expect("Failed to remove show");
-
-        let paused = db.get_paused_shows().expect("Failed to get shows");
-        assert_eq!(paused.len(), 0);
-
-        let episodes = db.get_episodes(&id).expect("Failed to get episodes");
+        let episodes = db
+            .get_episodes_for_show(&show_id)
+            .expect("Failed to get episodes");
         assert_eq!(episodes.len(), 0);
-
-        let watched = db
-            .get_show_watch_status(&id)
-            .expect("Failed to get watch status");
-        assert_eq!(watched.len(), 0);
     }
 
     #[test]
     fn test_shows_aired_between() {
-        let show = TvShow {
-            name: "Test Show".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
-
-        let show2 = TvShow {
-            name: "Test Show 2".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
-
-        let show3 = TvShow {
-            name: "Test Show 2".to_string(),
-            image: None,
-            year: None,
-            url: None,
-            imdb_id: None,
-            tvdb_id: None,
-        };
+        let show = generate_empty_show("Test Show", 0);
+        let show2 = generate_empty_show("Test Show 2", 0);
+        let show3 = generate_empty_show("Test Show 3", 0);
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
-        let show1_id = db
-            .add_show(&show, &TvMazeShowId(0))
-            .expect("Failed to add show 1");
-        let show2_id = db
-            .add_show(&show2, &TvMazeShowId(1))
-            .expect("Failed to add show 2");
+        let show_id1 = db.add_show(&show).expect("Failed to add show 1");
+        let show_id2 = db.add_show(&show2).expect("Failed to add show 2");
 
         // Show 3 has no episodes
-        db.add_show(&show3, &TvMazeShowId(2))
-            .expect("Failed to add show 3");
+        db.add_show(&show3).expect("Failed to add show 3");
 
-        let show_ids = [show1_id, show2_id];
+        let show_ids = [show_id1, show_id2];
         for i in 0..100 {
             let show_id = show_ids[(i % 2) as usize];
-            let episode = TvEpisode {
+            let episode = RemoteEpisode {
                 name: "Test episode".to_string(),
                 season: 1,
                 episode: i,
@@ -1208,17 +1227,21 @@ mod test {
             NaiveDate::from_num_days_from_ce_opt(1012).expect("Failed to set start date");
         let end_date = NaiveDate::from_num_days_from_ce_opt(1014).expect("Failed to set end date");
 
-        let show_episodes = db
+        let episodes = db
             .get_episodes_aired_between(&start_date, &end_date)
             .expect("Failed to get aired episodes");
 
-        assert_eq!(show_episodes.shows.len(), 2);
-        assert_eq!(show_episodes.shows.get(&show1_id), Some(&show));
-        assert_eq!(show_episodes.shows.get(&show2_id), Some(&show2));
-
         // Airdates are inclusive, so we should expect 3 days of 4 episodes a day
-        assert_eq!(show_episodes.episodes.len(), 12);
-        assert_eq!(show_episodes.episodes[0].episode.airdate, Some(start_date));
-        assert_eq!(show_episodes.episodes[11].episode.airdate, Some(end_date));
+        assert_eq!(episodes.len(), 12);
+        let min_date = episodes
+            .values()
+            .min_by(|a, b| a.airdate.cmp(&b.airdate))
+            .and_then(|x| x.airdate);
+        let max_date = episodes
+            .values()
+            .max_by(|a, b| a.airdate.cmp(&b.airdate))
+            .and_then(|x| x.airdate);
+        assert_eq!(min_date, Some(start_date));
+        assert_eq!(max_date, Some(end_date));
     }
 }

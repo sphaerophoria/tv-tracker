@@ -6,7 +6,7 @@ use tracing::debug;
 
 use std::io::Read;
 
-use crate::types::{ImdbShowId, TvEpisode, TvShow, TvdbShowId};
+use crate::types::{ImdbShowId, RemoteEpisode, RemoteTvShow, TvdbShowId};
 
 fn tvmaze_api_url(url: &str) -> String {
     const API_ROOT: &str = "https://api.tvmaze.com";
@@ -38,15 +38,21 @@ struct ApiShow {
     externals: Option<ApiExternals>,
 }
 
-impl From<ApiShow> for TvShow {
+impl From<ApiShow> for RemoteTvShow<TvMazeShowId> {
     fn from(value: ApiShow) -> Self {
-        TvShow {
+        let (imdb_id, tvdb_id) = match value.externals {
+            Some(v) => (v.imdb, v.thetvdb),
+            None => (None, None),
+        };
+
+        RemoteTvShow {
+            id: value.id,
             name: value.name,
             year: value.premiered.map(|d| d.year()),
             url: value.url,
             image: value.image.map(|i| i.medium),
-            imdb_id: value.externals.as_ref().and_then(|x| x.imdb.clone()),
-            tvdb_id: value.externals.as_ref().and_then(|x| x.thetvdb),
+            imdb_id,
+            tvdb_id,
         }
     }
 }
@@ -56,18 +62,9 @@ struct ApiSearchItem {
     show: ApiShow,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TvMazeShow {
-    pub id: TvMazeShowId,
-    pub show: TvShow,
-}
-
-impl From<ApiSearchItem> for TvMazeShow {
+impl From<ApiSearchItem> for RemoteTvShow<TvMazeShowId> {
     fn from(value: ApiSearchItem) -> Self {
-        let id = value.show.id.clone();
-        let show = value.show.into();
-
-        TvMazeShow { id, show }
+        value.show.into()
     }
 }
 
@@ -83,10 +80,10 @@ struct ApiEpisode {
     airdate: String,
 }
 
-impl From<ApiEpisode> for TvEpisode {
+impl From<ApiEpisode> for RemoteEpisode {
     fn from(value: ApiEpisode) -> Self {
         let airdate = NaiveDate::parse_from_str(&value.airdate, "%Y-%m-%d").ok();
-        TvEpisode {
+        RemoteEpisode {
             name: value.name,
             season: value.season,
             episode: value.number,
@@ -118,18 +115,18 @@ fn send_request<T: DeserializeOwned>(url: &str) -> Result<T, TvMazeApiError> {
     Ok(serde_json::from_str(&body_s)?)
 }
 
-pub fn show(id: &TvMazeShowId) -> Result<TvShow, TvMazeApiError> {
+pub fn show(id: &TvMazeShowId) -> Result<RemoteTvShow<TvMazeShowId>, TvMazeApiError> {
     let show: ApiShow = send_request(&format!("/shows/{}", id.0))?;
     Ok(show.into())
 }
 
-pub fn search(query: &str) -> Result<Vec<TvMazeShow>, TvMazeApiError> {
+pub fn search(query: &str) -> Result<Vec<RemoteTvShow<TvMazeShowId>>, TvMazeApiError> {
     let query: &str = &urlencoding::encode(query);
     let shows: Vec<ApiSearchItem> = send_request(&format!("/search/shows?q={query}"))?;
     Ok(shows.into_iter().map(Into::into).collect())
 }
 
-pub fn episodes(show: &TvMazeShowId) -> Result<Vec<TvEpisode>, TvMazeApiError> {
+pub fn episodes(show: &TvMazeShowId) -> Result<Vec<RemoteEpisode>, TvMazeApiError> {
     let episodes: Vec<ApiEpisode> = send_request(&format!("/shows/{}/episodes", show.0))?;
     Ok(episodes.into_iter().map(Into::into).collect())
 }

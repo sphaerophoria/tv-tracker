@@ -32,20 +32,72 @@ fn extract_client() -> Result<TempDir, ClientExtractionError> {
     Ok(d)
 }
 
-async fn handle_shows(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+async fn get_shows(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
     let app = req.state();
     Ok(serde_json::to_value(app.shows()?)?)
 }
 
-#[derive(Deserialize)]
-struct GetEpisodesQueryParams {
-    show_id: ShowId,
+#[derive(Debug, Deserialize)]
+struct PutShowsRequest {
+    remote_id: TvMazeShowId,
 }
 
-async fn handle_episodes(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+async fn put_shows(mut req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let params: PutShowsRequest = req.body_json().await?;
     let app = req.state();
-    let query: GetEpisodesQueryParams = req.query()?;
-    Ok(serde_json::to_value(app.episodes(&query.show_id)?)?)
+    let show = app.add_show(&params.remote_id)?;
+    Ok(serde_json::to_value(show)?)
+}
+
+#[derive(Debug, Error)]
+#[error("no show with id")]
+struct NoShowWithId;
+
+async fn get_show(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let id: i64 = req.param("id")?.parse()?;
+    let app = req.state();
+    let shows = app.shows()?;
+    let show = shows.get(&ShowId(id)).ok_or(NoShowWithId)?;
+    Ok(serde_json::to_value(show)?)
+}
+
+#[derive(Debug, Deserialize)]
+struct PutShowRequest {
+    id: ShowId,
+    pause_status: bool,
+}
+
+#[derive(Debug, Error)]
+#[error("id does not match URI")]
+struct NonMatchingId;
+
+async fn put_show(mut req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let id: i64 = req.param("id")?.parse()?;
+    let id = ShowId(id);
+
+    let params: PutShowRequest = req.body_json().await?;
+    if params.id != id {
+        return Err(NonMatchingId.into());
+    }
+
+    let app = req.state();
+    let show = app.set_show_pause_status(&id, params.pause_status)?;
+    Ok(serde_json::to_value(show)?)
+}
+
+async fn delete_show(req: tide::Request<App>) -> tide::Result<tide::StatusCode> {
+    let id: i64 = req.param("id")?.parse()?;
+    let app = req.state();
+    app.remove_show(&ShowId(id))?;
+    Ok(tide::StatusCode::Ok)
+}
+
+async fn get_episodes_for_show(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let id: i64 = req.param("id")?.parse()?;
+    let id = ShowId(id);
+
+    let app = req.state();
+    Ok(serde_json::to_value(app.episodes_for_show(&id)?)?)
 }
 
 #[derive(Deserialize)]
@@ -61,100 +113,45 @@ async fn handle_search(req: tide::Request<App>) -> tide::Result<serde_json::Valu
 }
 
 #[derive(Deserialize)]
-struct GetWatchStatusParams {
-    show_id: ShowId,
-}
-
-async fn handle_get_watch_status(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
-    let request: GetWatchStatusParams = req.query()?;
-    let app = req.state();
-    let watch_status = app.get_watch_status(&request.show_id)?;
-    Ok(serde_json::to_value(watch_status)?)
-}
-
-async fn handle_get_shows_by_watch_status(
-    req: tide::Request<App>,
-) -> tide::Result<serde_json::Value> {
-    let app = req.state();
-    let watch_status = app.get_shows_by_watch_status()?;
-    Ok(serde_json::to_value(watch_status)?)
-}
-
-#[derive(Debug, Deserialize)]
-struct SetWatchStatusRequest {
-    episode_id: EpisodeId,
-    watch_date: Option<NaiveDate>,
-}
-
-async fn handle_set_watch_status(mut req: tide::Request<App>) -> tide::Result<tide::StatusCode> {
-    let request: SetWatchStatusRequest = req.body_json().await?;
-    let app = req.state();
-    app.set_watch_status(&request.episode_id, request.watch_date)?;
-    Ok(tide::StatusCode::Ok)
-}
-
-#[derive(Debug, Deserialize)]
-struct AddRequest {
-    id: TvMazeShowId,
-}
-
-async fn handle_add(mut req: tide::Request<App>) -> tide::Result<tide::StatusCode> {
-    let request: AddRequest = req.body_json().await?;
-    let app = req.state();
-    if let Err(e) = app.add_show(&request.id) {
-        println!("{:?}", e);
-    }
-    Ok(tide::StatusCode::Ok)
-}
-
-#[derive(Debug, Deserialize)]
-struct RemoveRequest {
-    show_id: ShowId,
-}
-
-async fn handle_remove(mut req: tide::Request<App>) -> tide::Result<tide::StatusCode> {
-    let request: RemoveRequest = req.body_json().await?;
-    let app = req.state();
-    app.remove_show(&request.show_id)?;
-    Ok(tide::StatusCode::Ok)
-}
-
-async fn handle_get_pause_status(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
-    let app = req.state();
-    let show_pause_status = app.get_paused_shows()?;
-    Ok(serde_json::to_value(show_pause_status)?)
-}
-
-#[derive(Debug, Deserialize)]
-struct SetShowPauseStatusRequest {
-    show_id: ShowId,
-    paused: bool,
-}
-
-async fn handle_set_show_pause_status(
-    mut req: tide::Request<App>,
-) -> tide::Result<tide::StatusCode> {
-    let request: SetShowPauseStatusRequest = req.body_json().await?;
-    let app = req.state();
-    app.set_show_pause_status(&request.show_id, request.paused)?;
-    Ok(tide::StatusCode::Ok)
-}
-
-#[derive(Deserialize)]
-struct GetEpisodesAiredBetweenParams {
+struct GetEpisodesQueryParams {
     start_date: NaiveDate,
     end_date: NaiveDate,
 }
 
-async fn handle_get_episodes_aired_between(
-    req: tide::Request<App>,
-) -> tide::Result<serde_json::Value> {
-    let query: GetEpisodesAiredBetweenParams = req.query()?;
+async fn get_episodes(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let params: GetEpisodesQueryParams = req.query()?;
     let app = req.state();
-    Ok(serde_json::to_value(app.get_episodes_aired_between(
-        &query.start_date,
-        &query.end_date,
-    )?)?)
+    let ret = app.get_episodes_aired_between(&params.start_date, &params.end_date)?;
+    Ok(serde_json::to_value(ret)?)
+}
+
+async fn get_episode(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let id: i64 = req.param("id")?.parse()?;
+    let id = EpisodeId(id);
+
+    let app = req.state();
+    let ret = app.get_episode(&id)?;
+    Ok(serde_json::to_value(ret)?)
+}
+
+#[derive(Debug, Deserialize)]
+struct PutEpisodeRequest {
+    id: EpisodeId,
+    watch_date: Option<NaiveDate>,
+}
+
+async fn put_episode(mut req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let id: i64 = req.param("id")?.parse()?;
+    let id = EpisodeId(id);
+
+    let params: PutEpisodeRequest = req.body_json().await?;
+    if params.id != id {
+        return Err(NonMatchingId.into());
+    }
+
+    let app = req.state();
+    let response = app.set_watch_status(&id, &params.watch_date)?;
+    Ok(serde_json::to_value(response)?)
 }
 
 #[derive(Error, Debug)]
@@ -175,6 +172,12 @@ impl Server {
         let mut app = tide::with_state(app);
         let embedded_html_dir = extract_client()?;
 
+        app.with(tide::utils::After(|res: tide::Response| async {
+            if let Some(err) = res.error() {
+                error!("{:?}", err);
+            }
+            Ok(res)
+        }));
         app.at("/").get(tide::Redirect::new("/episodes.html"));
         if let Some(data_path) = data_path {
             info!("Overriding embedded html with {}", data_path.display());
@@ -187,21 +190,17 @@ impl Server {
                 .map_err(ServerCreationError::ServeDir)?;
         }
 
-        app.at("/shows").get(handle_shows);
-        app.at("/episodes").get(handle_episodes);
+        app.at("/shows").get(get_shows).put(put_shows);
+
+        app.at("/shows/:id")
+            .get(get_show)
+            .put(put_show)
+            .delete(delete_show);
+        app.at("/shows/:id/episodes").get(get_episodes_for_show);
         app.at("/search").get(handle_search);
-        app.at("/add_show").put(handle_add);
-        app.at("/remove_show").put(handle_remove);
-        app.at("/watch_status")
-            .get(handle_get_watch_status)
-            .put(handle_set_watch_status);
-        app.at("/shows_by_watch_status")
-            .get(handle_get_shows_by_watch_status);
-        app.at("/pause_status")
-            .get(handle_get_pause_status)
-            .put(handle_set_show_pause_status);
-        app.at("/episodes_aired_between")
-            .get(handle_get_episodes_aired_between);
+        app.at("/episodes").get(get_episodes);
+
+        app.at("/episodes/:id").get(get_episode).put(put_episode);
 
         Ok(Server {
             app,
