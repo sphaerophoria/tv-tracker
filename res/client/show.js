@@ -139,7 +139,9 @@ class ShowPage {
     ratings_selector.innerHTML = "";
     ratings_selector.add(no_rating_option);
 
-    let ratings = Object.values(this.ratings).sort((a, b) => a.priority >= b.priority);
+    let ratings = Object.values(this.ratings).sort(
+      (a, b) => a.priority >= b.priority
+    );
     for (const rating of ratings) {
       let option = document.createElement("option");
       option.rating_id = rating.id;
@@ -152,7 +154,8 @@ class ShowPage {
     }
 
     ratings_selector.onchange = (e) => {
-      let rating_id = ratings_selector.options[ratings_selector.selectedIndex].rating_id;
+      let rating_id =
+        ratings_selector.options[ratings_selector.selectedIndex].rating_id;
       let new_show = window.structuredClone(this.show);
       new_show.rating_id = rating_id;
       this.put_show(new_show);

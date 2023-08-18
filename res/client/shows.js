@@ -33,8 +33,10 @@ async function render_by_group(groups, div) {
 
 function group_by_rating(shows_obj, ratings_obj) {
   let shows = Object.values(shows_obj);
-  let ratings = Object.values(ratings_obj);
-  let groups = []
+  let ratings = Object.values(ratings_obj).sort(
+    (a, b) => a.priority >= b.priority
+  );
+  let groups = [];
 
   for (const rating of ratings) {
     const rating_shows = shows.filter((elem) => elem.rating_id == rating.id);
@@ -47,7 +49,7 @@ function group_by_rating(shows_obj, ratings_obj) {
   const unrated_shows = shows.filter((elem) => elem.rating_id == null);
   groups.push({
     name: "Unrated",
-    items: unrated_shows
+    items: unrated_shows,
   });
   return groups;
 }
@@ -89,9 +91,9 @@ function group_by_watch_status(shows) {
       name: "Finished/Caught up",
       items: finished_shows,
     },
-  ]
+  ];
 
-  return groups
+  return groups;
 }
 
 class ShowPage {
@@ -104,26 +106,25 @@ class ShowPage {
     let sort_style_selector = document.getElementById("sort-style");
     let sort_style = sort_style_selector.selectedIndex;
 
-    let grouped_shows = []
+    let grouped_shows = [];
     if (sort_style == 0) {
       grouped_shows = group_by_watch_status(this.shows);
-    }
-    else if (sort_style == 1) {
+    } else if (sort_style == 1) {
       grouped_shows = group_by_rating(this.shows, this.ratings);
-    }
-    else if (sort_style == 2) {
-      grouped_shows = [{
-        name: "Shows",
-        items: Object.values(this.shows),
-      }]
+    } else if (sort_style == 2) {
+      grouped_shows = [
+        {
+          name: "Shows",
+          items: Object.values(this.shows),
+        },
+      ];
     }
 
     let shows_div = document.getElementById("shows");
     shows_div.innerHTML = "";
     render_by_group(grouped_shows, shows_div);
   }
-};
-
+}
 
 async function init() {
   const shows_promise = get_shows();
@@ -136,8 +137,8 @@ async function init() {
 
   let sort_style_selector = document.getElementById("sort-style");
   sort_style_selector.onchange = () => {
-    show_page.render()
-  }
+    show_page.render();
+  };
 }
 
 init();

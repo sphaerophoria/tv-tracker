@@ -51,6 +51,10 @@ class RatingsPage {
       elem_div.classList.add("rating-div");
       div.appendChild(elem_div);
 
+      const number = document.createElement("h2");
+      number.innerHTML = "" + rating.priority + ".";
+      elem_div.appendChild(number);
+
       const header = document.createElement("h2");
       header.contentEditable = true;
       header.innerHTML = rating.name;
