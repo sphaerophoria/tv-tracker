@@ -6,15 +6,20 @@ function sort_shows_by_name(shows) {
   shows.sort((a, b) => a.name.toLowerCase() > b.name.toLowerCase());
 }
 
-function render_shows(shows) {
+function render_shows(shows, parent) {
   sort_shows_by_name(shows);
 
   let ret = "";
   for (const show of shows) {
-    ret += "<a href=/show.html?show_id=" + show.id + ">";
-    ret += show.name;
-    ret += "</a>";
-    ret += "<br>";
+    const link = document.createElement("a");
+    link.href = "/show.html?show_id=" + show.id;
+    link.innerText = show.name;
+    link.classList.add(show.watch_status);
+    if (show.pause_status) {
+      link.classList.add("paused");
+    }
+    parent.appendChild(link);
+    parent.appendChild(document.createElement("br"));
   }
   return ret;
 }
@@ -26,7 +31,7 @@ async function render_by_group(groups, div) {
     div.appendChild(header);
 
     const links = document.createElement("div");
-    links.innerHTML = render_shows(group.items);
+    render_shows(group.items, links);
     div.appendChild(links);
   }
 }
