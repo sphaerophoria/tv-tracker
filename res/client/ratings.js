@@ -43,6 +43,7 @@ class RatingsPage {
   render() {
     let ratings = Object.values(this.ratings);
     ratings.sort((a, b) => a.priority >= b.priority);
+
     let div = document.getElementById("ratings-div");
     div.innerHTML = "";
 
@@ -51,90 +52,95 @@ class RatingsPage {
       elem_div.classList.add("rating-div");
       div.appendChild(elem_div);
 
-      const number = document.createElement("h2");
-      number.innerHTML = "" + rating.priority + ".";
-      elem_div.appendChild(number);
-
-      const header = document.createElement("h2");
-      header.contentEditable = true;
-      header.innerHTML = rating.name;
-
-      header.onkeydown = (event) => {
-        if (event.keyCode == 13) {
-          event.preventDefault();
-          header.blur();
-        }
-      };
-
-      header.onblur = (event) => {
-        this.update_rating_name(rating.id, header);
-      };
-
-      elem_div.appendChild(header);
-
-      const up_button = document.createElement("input");
-      up_button.type = "button";
-      up_button.value = "Up";
-      up_button.onclick = () => {
-        let ratings = Object.values(this.ratings);
-        let target_item = find_lower_priority(ratings, rating.priority);
-        if (target_item !== null) {
-          this.swap_priorities(rating, target_item);
-        }
-      };
-      elem_div.appendChild(up_button);
-
-      const down_button = document.createElement("input");
-      down_button.type = "button";
-      down_button.value = "Down";
-      down_button.onclick = () => {
-        let ratings = Object.values(this.ratings);
-        let target_item = find_higher_priority(ratings, rating.priority);
-        if (target_item !== null) {
-          this.swap_priorities(rating, target_item);
-        }
-      };
-      elem_div.appendChild(down_button);
-
-      const delete_button = document.createElement("input");
-      delete_button.type = "button";
-      delete_button.value = "Delete";
-      delete_button.onclick = () => {
-        this.delete_rating(rating.id);
-      };
-      elem_div.appendChild(delete_button);
+      add_rating_to_div(this, rating, elem_div);
+      add_up_button_to_div(this, rating, elem_div);
+      add_down_button_to_div(this, rating, elem_div);
+      add_delete_button_to_div(this, rating, elem_div);
     }
-
-    const elem_div = document.createElement("div");
-    elem_div.classList.add("rating-div");
-    div.appendChild(elem_div);
-
-    let new_rating_name = document.createElement("input");
-    new_rating_name.type = "text";
-    new_rating_name.placeholder = "Add a rating";
-    elem_div.appendChild(new_rating_name);
-
-    let new_rating_add_button = document.createElement("input");
-    new_rating_add_button.type = "button";
-    new_rating_add_button.value = "Add";
-    new_rating_add_button.onclick = () => {
-      this.add_rating(new_rating_name.value);
-    };
-    elem_div.appendChild(new_rating_add_button);
   }
 }
 
-function find_lower_priority(array, target_priority) {
+function add_rating_to_div(page, rating, elem_div) {
+  const number = document.createElement("h2");
+  number.innerHTML = "" + rating.priority + ".";
+  elem_div.appendChild(number);
+
+  const header = document.createElement("h2");
+  header.contentEditable = true;
+  header.innerHTML = rating.name;
+
+  header.onkeydown = (event) => {
+    if (event.keyCode == 13) {
+      event.preventDefault();
+      header.blur();
+    }
+  };
+
+  header.onblur = (event) => {
+    page.update_rating_name(rating.id, header);
+  };
+
+  elem_div.appendChild(header);
+}
+
+function add_up_button_to_div(page, rating, elem_div) {
+  const up_button = document.createElement("input");
+  up_button.type = "button";
+  up_button.value = "Up";
+  up_button.onclick = () => {
+    let ratings = Object.values(page.ratings);
+    let target_item = find_lower_priority(ratings, rating.priority);
+    if (target_item !== null) {
+      page.swap_priorities(rating, target_item);
+    }
+  };
+  elem_div.appendChild(up_button);
+}
+
+function add_down_button_to_div(page, rating, elem_div) {
+  const down_button = document.createElement("input");
+  down_button.type = "button";
+  down_button.value = "Down";
+  down_button.onclick = () => {
+    let ratings = Object.values(page.ratings);
+    let target_item = find_higher_priority(ratings, rating.priority);
+    if (target_item !== null) {
+      page.swap_priorities(rating, target_item);
+    }
+  };
+  elem_div.appendChild(down_button);
+}
+
+function add_delete_button_to_div(page, rating, elem_div) {
+  const delete_button = document.createElement("input");
+  delete_button.type = "button";
+  delete_button.value = "Delete";
+  delete_button.onclick = () => {
+    page.delete_rating(rating.id);
+  };
+  elem_div.appendChild(delete_button);
+}
+
+function find_closest_with_thresh(array, thresh, cmp) {
   let ret = array.reduce((acc, current) => {
-    if (current.priority >= target_priority) {
+    // In the case of trying to find the largest value below the threshold
+    // cmp is >
+
+    // We negate the comparison to get the equivalent of <= from >
+    // If thresh <= current.priority we skip current
+    if (!cmp(current.priority, thresh)) {
       return acc;
     }
 
+    // At this point we are below the threshold
+
+    // If the accumulator is null, no work to do, this is the first valid option
     if (acc === null) {
       return current;
     }
 
-    if (acc.priority < current.priority) {
+    // Otherwise we pick the larger value between the accumulator and current item
+    if (cmp(acc.priority, current.priority)) {
       return current;
     }
 
@@ -144,24 +150,12 @@ function find_lower_priority(array, target_priority) {
   return ret;
 }
 
+function find_lower_priority(array, target_priority) {
+  return find_closest_with_thresh(array, target_priority, (a, b) => a < b);
+}
+
 function find_higher_priority(array, target_priority) {
-  let ret = array.reduce((acc, current) => {
-    if (current.priority <= target_priority) {
-      return acc;
-    }
-
-    if (acc === null) {
-      return current;
-    }
-
-    if (acc.priority > current.priority) {
-      return current;
-    }
-
-    return acc;
-  }, null);
-
-  return ret;
+  return find_closest_with_thresh(array, target_priority, (a, b) => a > b);
 }
 
 async function init() {

@@ -18,3 +18,8 @@
   margin-bottom: 4px;
   margin-top: 4px;
 }
+
+#add-rating-text {
+  grid-column-start: 1;
+  grid-column-end: 3;
+}
