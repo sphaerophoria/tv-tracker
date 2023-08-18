@@ -6,6 +6,7 @@ import {
   put_show,
   put_episode,
   delete_show,
+  get_ratings,
 } from "./http.js";
 
 function page_show_id() {
@@ -35,9 +36,10 @@ async function remove_show(show_id) {
 }
 
 class ShowPage {
-  constructor(show, episodes) {
+  constructor(show, episodes, ratings) {
     this.show = show;
     this.episodes = episodes;
+    this.ratings = ratings;
 
     const mark_watched_button = document.getElementById("mark-all-watched");
     mark_watched_button.onclick = () => this.mark_aired_watched();
@@ -104,6 +106,7 @@ class ShowPage {
     let response = await put_show(show);
     this.show = response;
   }
+
   async put_episode(episode) {
     let response = await put_episode(episode);
     this.episodes[response.id] = response;
@@ -127,6 +130,32 @@ class ShowPage {
 
     let season_episodes = group_episodes_by_seasons(this.episodes);
     let today = Date.now();
+
+    const ratings = document.getElementById("ratings");
+    ratings.onselect = null;
+
+    const no_rating_option = document.getElementById("no-rating-option");
+    no_rating_option.rating_id = null;
+    ratings.innerHTML = "";
+    ratings.add(no_rating_option);
+
+    for (const rating of Object.values(this.ratings)) {
+      let option = document.createElement("option");
+      option.rating_id = rating.id;
+      option.innerText = rating.name;
+      ratings.add(option);
+
+      if (rating.id == this.show.rating_id) {
+        ratings.selectedIndex = ratings.length - 1;
+      }
+    }
+
+    ratings.onchange = (e) => {
+      let rating_id = ratings.options[ratings.selectedIndex].rating_id;
+      let new_show = window.structuredClone(this.show);
+      new_show.rating_id = rating_id;
+      this.put_show(new_show);
+    };
 
     for (const [season, episodes] of season_episodes) {
       const season_header = document.createElement("h2");
@@ -173,11 +202,16 @@ async function init() {
 
   const show_promise = get_show(show_id);
   const episodes_promise = get_show_episodes(show_id);
+  const ratings_promise = get_ratings();
 
-  let show, episodes;
-  [show, episodes] = await Promise.all([show_promise, episodes_promise]);
+  let show, episodes, ratings;
+  [show, episodes, ratings] = await Promise.all([
+    show_promise,
+    episodes_promise,
+    ratings_promise,
+  ]);
 
-  const page = new ShowPage(show, episodes);
+  const page = new ShowPage(show, episodes, ratings);
   page.render_show();
 }
 

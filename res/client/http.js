@@ -58,3 +58,36 @@ export async function put_episode(episode) {
   const response = await fetch(request);
   return await response.json();
 }
+
+export async function get_ratings() {
+  const request = new Request("/ratings", {
+    method: "GET",
+  });
+  const response = await fetch(request);
+  return await response.json();
+}
+
+export async function put_ratings(rating) {
+  const request = new Request("/ratings", {
+    method: "PUT",
+    body: JSON.stringify(rating),
+  });
+  const response = await fetch(request);
+  return await response.json();
+}
+
+export async function put_rating(rating) {
+  const request = new Request("/ratings/" + rating.id, {
+    method: "PUT",
+    body: JSON.stringify(rating),
+  });
+  const response = await fetch(request);
+  return await response.json();
+}
+
+export async function delete_rating(rating_id) {
+  const request = new Request("/ratings/" + rating_id, {
+    method: "DELETE",
+  });
+  const response = await fetch(request);
+}

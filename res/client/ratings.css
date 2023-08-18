@@ -1,0 +1,20 @@
+.rating-div {
+  display: grid;
+  grid-template-columns: auto min-content min-content min-content;
+  align-items: center;
+}
+
+.rating-div h2 {
+  margin-bottom: 4px;
+  margin-top: 4px;
+}
+
+.rating-div input[type=button] {
+  margin-bottom: 4px;
+  margin-top: 4px;
+}
+
+.rating-div input[type=text] {
+  margin-bottom: 4px;
+  margin-top: 4px;
+}
