@@ -216,7 +216,7 @@ impl Server {
             }
             Ok(res)
         }));
-        app.at("/").get(tide::Redirect::new("/episodes.html"));
+        app.at("/").get(tide::Redirect::new("/shows.html"));
         if let Some(data_path) = data_path {
             info!("Overriding embedded html with {}", data_path.display());
             app.at("/")

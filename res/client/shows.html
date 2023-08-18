@@ -2,11 +2,18 @@
 <html>
   <head>
     <link rel="stylesheet" href="/water.css" />
-    <script src="links.js" defer></script>
+    <link rel="stylesheet" href="/index.css" />
+    <script src="links.js"></script>
     <script type="module" src="shows.js" defer></script>
     <title>TV Tracker</title>
   </head>
   <body>
-    <div id="shows_list"></div>
+    <label for="sort-style">Sort style:</label>
+    <select id="sort-style">
+      <option>Watch status</option>
+      <option>Rating</option>
+      <option>Name</option>
+    </select>
+    <div id="shows"></div>
   </body>
 </html>

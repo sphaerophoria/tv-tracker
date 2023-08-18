@@ -131,27 +131,28 @@ class ShowPage {
     let season_episodes = group_episodes_by_seasons(this.episodes);
     let today = Date.now();
 
-    const ratings = document.getElementById("ratings");
-    ratings.onselect = null;
+    const ratings_selector = document.getElementById("ratings");
+    ratings_selector.onselect = null;
 
     const no_rating_option = document.getElementById("no-rating-option");
     no_rating_option.rating_id = null;
-    ratings.innerHTML = "";
-    ratings.add(no_rating_option);
+    ratings_selector.innerHTML = "";
+    ratings_selector.add(no_rating_option);
 
-    for (const rating of Object.values(this.ratings)) {
+    let ratings = Object.values(this.ratings).sort((a, b) => a.priority >= b.priority);
+    for (const rating of ratings) {
       let option = document.createElement("option");
       option.rating_id = rating.id;
       option.innerText = rating.name;
-      ratings.add(option);
+      ratings_selector.add(option);
 
       if (rating.id == this.show.rating_id) {
-        ratings.selectedIndex = ratings.length - 1;
+        ratings_selector.selectedIndex = ratings_selector.length - 1;
       }
     }
 
-    ratings.onchange = (e) => {
-      let rating_id = ratings.options[ratings.selectedIndex].rating_id;
+    ratings_selector.onchange = (e) => {
+      let rating_id = ratings_selector.options[ratings_selector.selectedIndex].rating_id;
       let new_show = window.structuredClone(this.show);
       new_show.rating_id = rating_id;
       this.put_show(new_show);
