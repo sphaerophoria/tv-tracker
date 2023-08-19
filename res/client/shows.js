@@ -11,15 +11,29 @@ function render_shows(shows, parent) {
 
   let ret = "";
   for (const show of shows) {
+    let pause_class = "unpaused";
+    if (show.pause_status) {
+      pause_class = "paused";
+    }
+
+    const card = document.createElement("div");
+    card.classList.add("card");
+    card.classList.add(pause_class);
+    card.classList.add(show.watch_status);
+    parent.appendChild(card);
+
     const link = document.createElement("a");
     link.href = "/show.html?show_id=" + show.id;
-    link.innerText = show.name;
-    link.classList.add(show.watch_status);
-    if (show.pause_status) {
-      link.classList.add("paused");
-    }
-    parent.appendChild(link);
-    parent.appendChild(document.createElement("br"));
+    card.appendChild(link);
+
+    const poster = document.createElement("img");
+    poster.src = show.image;
+    link.appendChild(poster);
+
+    const name = document.createElement("p");
+    name.innerText = show.name + " (" + show.year + ")";
+    name.classList.add("show-name");
+    link.appendChild(name);
   }
   return ret;
 }
@@ -31,6 +45,7 @@ async function render_by_group(groups, div) {
     div.appendChild(header);
 
     const links = document.createElement("div");
+    links.classList.add("show-list");
     render_shows(group.items, links);
     div.appendChild(links);
   }

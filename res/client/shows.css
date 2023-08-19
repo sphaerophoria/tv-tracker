@@ -1,11 +1,46 @@
-.finished {
-  color: green;
+:root {
+  --card-border-radius: 10px;
+
 }
 
-.unstarted {
-  color: red;
+body {
+  max-width: 1200px;
 }
 
-.paused {
-  color: #ABAB00;
+.show-list {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.card {
+  width: 150px;
+  margin: 5px;
+  border-radius: var(--card-border-radius);
+  background: lightgray;
+}
+
+.card.finished {
+  background: lightgreen;
+}
+
+.card.in_progress {
+  background: lightblue;
+}
+
+.card.paused {
+  background: #fcfc75;
+}
+
+.card img {
+  border-top-left-radius: var(--card-border-radius);
+  border-top-right-radius: var(--card-border-radius);
+  margin: 0px;
+}
+
+.show-name {
+  text-align: center;
+  margin-right: 8px;
+  margin-left: 8px;
+  margin-top: 0px;
+  margin-bottom: 8px;
 }
