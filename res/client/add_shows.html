@@ -2,20 +2,21 @@
 <html>
   <head>
     <link rel="stylesheet" href="/water.css" />
-    <link rel="stylesheet" href="/index.css" />
+    <link rel="stylesheet" href="/style.css" />
     <script src="links.js"></script>
-    <script src="add_shows.js" defer></script>
+    <script src="add_shows.js" type="module" defer></script>
     <title>TV Tracker</title>
   </head>
   <body>
-    <div id="search-container">
+    <div id="search-container" class="show-search-container">
       <input
         id="show-search"
+        class="show-search-button"
         placeholder="Search for show"
         autocomplete="off"
       />
       <button id="show-search-button">Search</button>
     </div>
-    <div id="search-results"></div>
+    <div id="search-results" class="show-list"></div>
   </body>
 </html>

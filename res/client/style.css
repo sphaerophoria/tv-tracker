@@ -1,0 +1,74 @@
+:root {
+  --card-border-radius: 10px;
+}
+
+body {
+  max-width: 1200px;
+}
+
+.show-list {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.show-card {
+  width: 150px;
+  margin: 5px;
+  border-radius: var(--card-border-radius);
+  background: lightgray;
+  position: relative;
+}
+
+.show-card.finished {
+  background: lightgreen;
+}
+
+.show-card.in_progress {
+  background: lightblue;
+}
+
+.show-card.paused {
+  background: #fcfc75;
+}
+
+.show-card img {
+  border-top-left-radius: var(--card-border-radius);
+  border-top-right-radius: var(--card-border-radius);
+  margin: 0px;
+}
+
+.show-name {
+  text-align: center;
+  margin-right: 8px;
+  margin-left: 8px;
+  margin-top: 0px;
+  margin-bottom: 8px;
+}
+
+.show-search-container {
+  display: flex;
+  flex-direction: row;
+}
+
+.show-search-button {
+  flex-grow: 1;
+}
+
+.show-card-placeholder-image {
+  /* Measured poster size as 210 x 295 */
+  max-width: 100%;
+  aspect-ratio: 210 / 295;
+}
+
+input[type=button].card-add-button {
+  position: absolute;
+  text-align: center;
+  vertical-align: middle;
+  font-size: larger;
+  padding: 0px 0px 0px 0px;
+  top: 8px;
+  right: 8px;
+  width: 1.5em;
+  height: 1.5em;
+  margin: 0px 0px 0px 0px;
+}

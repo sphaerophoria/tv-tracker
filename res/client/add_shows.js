@@ -1,5 +1,7 @@
 "use strict";
 
+import { render_card_element } from "./show_card.js";
+
 function handle_search(element) {
   if (event.key === "Enter") {
     const request = new Request("/search?" + element.value, {
@@ -34,28 +36,18 @@ async function handle_add(item) {
   fetch(request);
 }
 
-function render_show(item) {
-  let rendered = '<div class="show-card">';
+function render_show(item, parent) {
+  const href = item.url;
+  const card = render_card_element(item, href, []);
 
-  if (item.url !== null) {
-    rendered += "<a href=" + item.url + ">";
-  }
+  const add_button = document.createElement("input");
+  add_button.type = "button";
+  add_button.value = "+";
+  add_button.classList.add("card-add-button");
+  add_button.onclick = () => handle_add(item.id);
+  card.appendChild(add_button);
 
-  if (item.image !== null) {
-    rendered += '<img class="card-image" src=' + item.image + ">";
-  } else {
-    rendered += '<div class="card-placeholder-image"></div>';
-  }
-
-  if (item.url !== null) {
-    rendered += "</a>";
-  }
-
-  rendered +=
-    '<input onclick="handle_add(' + item.id + ')" type="button" value="+"/>';
-  rendered += "</div>";
-
-  return rendered;
+  parent.appendChild(card);
 }
 
 async function execute_search() {
@@ -68,14 +60,10 @@ async function execute_search() {
 
   const search_results = document.getElementById("search-results");
 
-  let new_html = "";
-
   for (const i in response_body) {
     const item = response_body[i];
-    new_html += render_show(item);
+    render_show(item, search_results);
   }
-
-  search_results.innerHTML = new_html;
 }
 
 function setup_search_handlers() {

@@ -1,6 +1,7 @@
 "use strict";
 
 import { get_shows, get_ratings } from "./http.js";
+import { render_card_element } from "./show_card.js";
 
 function sort_shows_by_name(shows) {
   shows.sort((a, b) => a.name.toLowerCase() > b.name.toLowerCase());
@@ -16,24 +17,11 @@ function render_shows(shows, parent) {
       pause_class = "paused";
     }
 
-    const card = document.createElement("div");
-    card.classList.add("card");
-    card.classList.add(pause_class);
-    card.classList.add(show.watch_status);
+    const extra_classes = [pause_class, show.watch_status];
+    const href = "/show.html?show_id=" + show.id;
+
+    const card = render_card_element(show, href, extra_classes);
     parent.appendChild(card);
-
-    const link = document.createElement("a");
-    link.href = "/show.html?show_id=" + show.id;
-    card.appendChild(link);
-
-    const poster = document.createElement("img");
-    poster.src = show.image;
-    link.appendChild(poster);
-
-    const name = document.createElement("p");
-    name.innerText = show.name + " (" + show.year + ")";
-    name.classList.add("show-name");
-    link.appendChild(name);
   }
   return ret;
 }
