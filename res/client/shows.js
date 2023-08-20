@@ -17,10 +17,15 @@ function render_shows(shows, parent) {
       pause_class = "paused";
     }
 
-    const extra_classes = [pause_class, show.watch_status];
+    const extra_classes = [pause_class];
     const href = "/show.html?show_id=" + show.id;
 
-    const card = render_card_element(show, href, extra_classes);
+    let progress = 0;
+    if (show.episodes_aired > 0) {
+      progress = show.episodes_watched / show.episodes_aired;
+    }
+
+    const card = render_card_element(show, href, extra_classes, progress);
     parent.appendChild(card);
   }
   return ret;
@@ -69,16 +74,14 @@ function group_by_watch_status(shows) {
   let paused_shows = [];
 
   for (const show of Object.values(shows)) {
-    if (show.pause_status === true) {
-      paused_shows.push(show);
-    } else if (show.watch_status == "finished") {
+    if (show.episodes_watched == show.episodes_aired) {
       finished_shows.push(show);
-    } else if (show.watch_status == "in_progress") {
+    } else if (show.pause_status) {
+      paused_shows.push(show);
+    } else if (show.episodes_watched > 0) {
       next_up_shows.push(show);
-    } else if (show.watch_status == "unstarted") {
-      unstarted_shows.push(show);
     } else {
-      throw new Error("Invalid show status " + show_status);
+      unstarted_shows.push(show);
     }
   }
 

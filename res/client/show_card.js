@@ -1,7 +1,7 @@
 "use strict";
 
 // Used for both remote shows and full shows
-export function render_card_element(show, href, extra_classes) {
+export function render_card_element(show, href, extra_classes, progress) {
   const card = document.createElement("div");
   card.classList.add("show-card");
   for (const klass of extra_classes) {
@@ -21,6 +21,23 @@ export function render_card_element(show, href, extra_classes) {
     poster.classList.add("show-card-placeholder-image");
     link.appendChild(poster);
   }
+
+  const progress_div = document.createElement("div");
+  progress_div.classList.add("show-progress");
+  link.appendChild(progress_div);
+
+  const watched_div = document.createElement("div");
+  watched_div.classList.add("num-watched");
+  progress_div.appendChild(watched_div);
+
+  if (progress !== undefined) {
+    watched_div.style.width = "" + progress * 100 + "%";
+  }
+
+  const unwatched_div = document.createElement("div");
+  unwatched_div.classList.add("num-unwatched");
+  unwatched_div.style.width = "auto";
+  progress_div.appendChild(unwatched_div);
 
   const name = document.createElement("p");
   name.innerText = show.name;

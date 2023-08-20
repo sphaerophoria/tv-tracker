@@ -2,7 +2,7 @@ use crate::{
     tv_maze::TvMazeShowId,
     types::{
         EpisodeId, ImageId, ImdbShowId, Rating, RatingId, RemoteEpisode, RemoteTvShow, ShowId,
-        ShowWatchStatus, TvEpisode, TvShow, TvdbShowId,
+        TvEpisode, TvShow, TvdbShowId,
     },
 };
 
@@ -1022,28 +1022,20 @@ fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetS
 
     let url = row.get(indices.url).map_err(GetShowError::GetTvMazeUrl)?;
 
-    let watch_count: Option<i64> = row
+    let episodes_watched: Option<i64> = row
         .get(indices.episodes_watched)
         .map_err(GetShowError::GetWatchCount)?;
-    let watch_count = watch_count.unwrap_or(0);
+    let episodes_watched = episodes_watched.unwrap_or(0);
 
-    let num_episodes: Option<i64> = row
+    let episodes_aired: Option<i64> = row
         .get(indices.num_episodes)
         .map_err(GetShowError::GetWatchCount)?;
-    let num_episodes = num_episodes.unwrap_or(0);
+    let episodes_aired = episodes_aired.unwrap_or(0);
 
     let pause_status: Option<i64> = row
         .get(indices.pause_status)
         .map_err(GetShowError::GetPauseStatus)?;
     let pause_status = pause_status.is_some();
-
-    let watch_status = if watch_count == num_episodes {
-        ShowWatchStatus::Finished
-    } else if watch_count == 0 {
-        ShowWatchStatus::Unstarted
-    } else {
-        ShowWatchStatus::InProgress
-    };
 
     Ok(TvShow {
         id,
@@ -1054,8 +1046,9 @@ fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetS
         tvdb_id,
         image,
         url,
-        watch_status,
         pause_status,
+        episodes_watched,
+        episodes_aired,
         rating_id,
     })
 }

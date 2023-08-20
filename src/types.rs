@@ -8,14 +8,6 @@ pub struct ImdbShowId(pub String);
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq)]
 pub struct TvdbShowId(pub i64);
 
-#[derive(Serialize, Eq, PartialEq, Debug, Clone, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowWatchStatus {
-    Finished,
-    Unstarted,
-    InProgress,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct RemoteTvShow<RemoteId> {
     pub id: RemoteId,
@@ -37,8 +29,9 @@ pub struct TvShow {
     pub url: Option<String>,
     pub imdb_id: Option<ImdbShowId>,
     pub tvdb_id: Option<TvdbShowId>,
-    pub watch_status: ShowWatchStatus,
     pub pause_status: bool,
+    pub episodes_watched: i64,
+    pub episodes_aired: i64,
     pub rating_id: Option<RatingId>,
 }
 
