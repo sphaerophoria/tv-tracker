@@ -32,7 +32,7 @@ pub struct TvShow {
     pub id: ShowId,
     pub remote_id: TvMazeShowId,
     pub name: String,
-    pub image: Option<String>,
+    pub image: Option<ImageId>,
     pub year: Option<i32>,
     pub url: Option<String>,
     pub imdb_id: Option<ImdbShowId>,
@@ -75,11 +75,14 @@ pub struct Rating {
     pub priority: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct ShowId(pub i64);
+macro_rules! impl_id {
+    ($name:ident) => {
+        #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
+        pub struct $name(pub i64);
+    };
+}
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct EpisodeId(pub i64);
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct RatingId(pub i64);
+impl_id!(ShowId);
+impl_id!(EpisodeId);
+impl_id!(RatingId);
+impl_id!(ImageId);

@@ -1,7 +1,7 @@
 use crate::{
     tv_maze::TvMazeShowId,
     types::{
-        EpisodeId, ImdbShowId, Rating, RatingId, RemoteEpisode, RemoteTvShow, ShowId,
+        EpisodeId, ImageId, ImdbShowId, Rating, RatingId, RemoteEpisode, RemoteTvShow, ShowId,
         ShowWatchStatus, TvEpisode, TvShow, TvdbShowId,
     },
 };
@@ -59,6 +59,8 @@ pub enum RemoveShowError {
     RemoveEpisodes(#[source] rusqlite::Error),
     #[error("failed to remove show")]
     RemoveShow(#[source] rusqlite::Error),
+    #[error("failed to remove dangling images")]
+    RemoveImages(#[source] rusqlite::Error),
     #[error("failed to verify foreign keys")]
     ForeignKeyCheck(#[source] rusqlite::Error),
     #[error("failed to commit transaction")]
@@ -160,7 +162,7 @@ pub struct SetPauseError(#[source] rusqlite::Error);
 
 const GET_SHOWS_QUERY: &str =
     "
-    SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_url, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, watch_count.count, epi_count.count, paused_shows.show_id, show_ratings.rating_id FROM shows
+    SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_id, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, watch_count.count, epi_count.count, paused_shows.show_id, show_ratings.rating_id FROM shows
     LEFT JOIN
         (
             SELECT show_id, COUNT(*) as count FROM episodes
@@ -230,6 +232,20 @@ pub enum DeleteRatingError {
 #[error("failed to set show rating")]
 pub struct SetShowRatingError(#[source] rusqlite::Error);
 
+#[derive(Debug, Error)]
+pub enum GetImageUrlError {
+    #[error("failed to prepare get image statement")]
+    Prepare(#[source] rusqlite::Error),
+    #[error("failed to query images")]
+    Query(#[source] rusqlite::Error),
+    #[error("failed to get row")]
+    GetRow(#[source] rusqlite::Error),
+    #[error("query returned no results")]
+    MissingRow,
+    #[error("failed to get url from query")]
+    GetImageUrl(#[source] rusqlite::Error),
+}
+
 pub struct Db {
     connection: Connection,
 }
@@ -257,10 +273,27 @@ impl Db {
             .connection
             .transaction()
             .map_err(AddShowError::StartTransaction)?;
+
+        let image_id = match &show.image {
+            Some(image_url) => {
+                transaction
+                    .execute(
+                        "
+                        INSERT INTO images(url)
+                        VALUES (?1)
+                        ",
+                        [image_url],
+                    )
+                    .map_err(AddShowError::Insert)?;
+                Some(transaction.last_insert_rowid())
+            }
+            None => None,
+        };
+
         transaction
             .execute(
                 "
-            INSERT INTO shows(name, tvmaze_id, year, imdb_id, tvdb_id, image_url, tvmaze_url)
+            INSERT INTO shows(name, tvmaze_id, year, imdb_id, tvdb_id, image_id, tvmaze_url)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ",
                 params![
@@ -269,7 +302,7 @@ impl Db {
                     show.year,
                     show.imdb_id.as_ref().map(|x| x.0.clone()),
                     show.tvdb_id.map(|x| x.0),
-                    show.image,
+                    image_id,
                     show.url
                 ],
             )
@@ -310,6 +343,13 @@ impl Db {
         transaction
             .execute("DELETE FROM shows WHERE id = ?1", [show.0])
             .map_err(RemoveShowError::RemoveShow)?;
+
+        transaction
+            .execute(
+                "DELETE FROM images WHERE id NOT IN (SELECT image_id FROM shows)",
+                [],
+            )
+            .map_err(RemoveShowError::RemoveImages)?;
 
         transaction
             .execute_batch("PRAGMA foreign_key_check")
@@ -770,6 +810,27 @@ impl Db {
 
         Ok(())
     }
+
+    pub fn get_image_url(&self, image_id: &ImageId) -> Result<String, GetImageUrlError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT url FROM images WHERE id = ?1")
+            .map_err(GetImageUrlError::Prepare)?;
+
+        let mut rows = statement
+            .query([image_id.0])
+            .map_err(GetImageUrlError::Query)?;
+
+        let row = match rows.next().map_err(GetImageUrlError::GetRow)? {
+            Some(v) => v,
+            None => {
+                return Err(GetImageUrlError::MissingRow);
+            }
+        };
+
+        let url = row.get(0).map_err(GetImageUrlError::GetImageUrl)?;
+        Ok(url)
+    }
 }
 
 fn show_ids_to_comma_separated<'a, I: Iterator<Item = &'a ShowId>>(mut it: I) -> String {
@@ -956,7 +1017,9 @@ fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetS
     let tvdb_id: Option<i64> = row.get(indices.tvdb_id).map_err(GetShowError::GetTvdbId)?;
     let tvdb_id = tvdb_id.map(TvdbShowId);
 
-    let image = row.get(indices.image).map_err(GetShowError::GetImageUrl)?;
+    let image: Option<i64> = row.get(indices.image).map_err(GetShowError::GetImageUrl)?;
+    let image = image.map(ImageId);
+
     let url = row.get(indices.url).map_err(GetShowError::GetTvMazeUrl)?;
 
     let watch_count: Option<i64> = row
@@ -1135,6 +1198,45 @@ fn upgrade_v3_v4(connection: &mut Connection) -> Result<(), DbCreationError> {
     Ok(())
 }
 
+fn upgrade_v4_v5(connection: &mut Connection) -> Result<(), DbCreationError> {
+    let transaction = connection
+        .transaction()
+        .map_err(DbCreationError::StartTransaction)?;
+
+    transaction
+        .execute_batch(
+            "
+            CREATE TABLE images(
+                id INTEGER PRIMARY KEY NOT NULL,
+                url TEXT NOT NULL
+            );
+            CREATE TABLE new_shows(
+                id INTEGER PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                tvmaze_id INTEGER NOT NULL,
+                year INTEGER,
+                imdb_id TEXT,
+                tvdb_id INTEGER,
+                image_id INTEGER,
+                tvmaze_url TEXT,
+                FOREIGN KEY(image_id) REFERENCES images(id)
+            );
+            INSERT INTO images SELECT null, image_url FROM shows;
+            INSERT INTO new_shows SELECT * FROM (SELECT shows.id, name, tvmaze_id, year, imdb_id, tvdb_id, images.id, tvmaze_url FROM shows LEFT JOIN images ON images.url = shows.image_url);
+            DROP TABLE shows;
+            ALTER TABLE new_shows RENAME TO shows;
+            PRAGMA user_version = 5;
+            ",
+        )
+        .map_err(DbCreationError::CreateRatings)?;
+
+    transaction
+        .commit()
+        .map_err(DbCreationError::CommitTransaction)?;
+
+    Ok(())
+}
+
 fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationError> {
     let version: usize = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -1145,6 +1247,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
         upgrade_v1_v2,
         upgrade_v2_v3,
         upgrade_v3_v4,
+        upgrade_v4_v5,
     ];
 
     for f in upgrade_functions.iter().skip(version) {
@@ -1155,7 +1258,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(DbCreationError::GetVersion)?;
 
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
 
     Ok(())
 }
@@ -1176,13 +1279,17 @@ mod test {
         }
     }
 
-    fn remote_from_tv_show(show: &TvShow) -> RemoteTvShow<TvMazeShowId> {
+    fn remote_from_tv_show(show: &TvShow, db: &Db) -> RemoteTvShow<TvMazeShowId> {
+        let image_url = show
+            .image
+            .map(|id| db.get_image_url(&id).expect("Failed to get image"));
+
         RemoteTvShow {
             id: show.remote_id.clone(),
             name: show.name.clone(),
             year: show.year.clone(),
             url: show.url.clone(),
-            image: show.image.clone(),
+            image: image_url,
             imdb_id: show.imdb_id.clone(),
             tvdb_id: show.tvdb_id.clone(),
         }
@@ -1224,7 +1331,7 @@ mod test {
         let inserted_show = db
             .get_show(&show_id, &gen_date(1234))
             .expect("Failed to get show");
-        assert_eq!(remote_from_tv_show(&inserted_show), show);
+        assert_eq!(remote_from_tv_show(&inserted_show, &db), show);
 
         let retrieved_shows = db.get_shows(&gen_date(1234)).expect("Failed to get show");
 
@@ -1243,7 +1350,7 @@ mod test {
         let inserted_show = db
             .get_show(&show_id, &gen_date(1234))
             .expect("Failed to get show");
-        assert_eq!(remote_from_tv_show(&inserted_show), show);
+        assert_eq!(remote_from_tv_show(&inserted_show, &db), show);
 
         let retrieved_shows = db.get_shows(&gen_date(1234)).expect("Failed to get show");
 
@@ -1265,9 +1372,12 @@ mod test {
 
         assert_eq!(shows.len(), 2);
         assert_eq!(find_show(show_id1, &shows).remote_id, TvMazeShowId(0));
-        assert_eq!(remote_from_tv_show(&find_show(show_id1, &shows)), show);
+        assert_eq!(remote_from_tv_show(&find_show(show_id1, &shows), &db), show);
         assert_eq!(find_show(show_id2, &shows).remote_id, TvMazeShowId(1));
-        assert_eq!(remote_from_tv_show(&find_show(show_id2, &shows)), show2);
+        assert_eq!(
+            remote_from_tv_show(&find_show(show_id2, &shows), &db),
+            show2
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@ export function render_card_element(show, href, extra_classes) {
 
   if (show.image !== null) {
     const poster = document.createElement("img");
-    poster.src = show.image;
+    poster.src = "/images/" + show.image;
     link.appendChild(poster);
   } else {
     const poster = document.createElement("div");

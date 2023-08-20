@@ -11,8 +11,11 @@ use std::{
 
 use crate::{
     db::{self, AddShowError as DbAddShowError, Db, GetShowError},
+    image_cache::{self, ImageCache},
     tv_maze::{self, TvMazeApiError, TvMazeShowId},
-    types::{EpisodeId, Rating, RatingId, RemoteTvShow, ShowId, TvEpisode, TvShow, TvShowUpdate},
+    types::{
+        EpisodeId, ImageId, Rating, RatingId, RemoteTvShow, ShowId, TvEpisode, TvShow, TvShowUpdate,
+    },
 };
 
 #[derive(Debug, Error)]
@@ -69,6 +72,14 @@ pub enum UpdateRatingError {
     UpdateRating(#[from] rusqlite::Error),
     #[error("failed to get ratings from db")]
     GetRatings(#[from] db::GetRatingsError),
+}
+
+#[derive(Debug, Error)]
+pub enum GetImageError {
+    #[error("failed to get image url from db")]
+    GetImageUrl(#[from] db::GetImageUrlError),
+    #[error("failed to get image")]
+    GetImage(#[from] image_cache::GetImageError),
 }
 
 struct IndexPoller {
@@ -134,6 +145,7 @@ pub struct SearchResults {
 
 pub struct Inner {
     db: Db,
+    image_cache: ImageCache,
 }
 
 type SharedInner = Arc<Mutex<Inner>>;
@@ -144,8 +156,8 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(db: Db) -> App {
-        let inner = Inner { db };
+    pub fn new(db: Db, image_cache: ImageCache) -> App {
+        let inner = Inner { db, image_cache };
 
         let inner = Arc::new(Mutex::new(inner));
 
@@ -279,6 +291,12 @@ impl App {
         let mut inner = self.inner.lock().expect("Poisoned lock");
         inner.db.update_rating(rating)?;
         Ok(inner.db.get_rating(&rating.id)?)
+    }
+
+    pub fn get_image(&self, id: &ImageId) -> Result<Vec<u8>, GetImageError> {
+        let inner = self.inner.lock().expect("Poisoned lock");
+        let url = inner.db.get_image_url(id)?;
+        Ok(inner.image_cache.get(id, &url)?)
     }
 }
 

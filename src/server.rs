@@ -9,7 +9,7 @@ use std::{fs::File, path::Path};
 use crate::{
     app::App,
     tv_maze::TvMazeShowId,
-    types::{EpisodeId, Rating, RatingId, ShowId, TvShowUpdate},
+    types::{EpisodeId, ImageId, Rating, RatingId, ShowId, TvShowUpdate},
 };
 
 #[derive(Error, Debug)]
@@ -161,6 +161,15 @@ async fn get_rating(req: tide::Request<App>) -> tide::Result<serde_json::Value> 
     Ok(serde_json::to_value(app.get_rating(&id)?)?)
 }
 
+async fn get_image(req: tide::Request<App>) -> tide::Result<tide::Body> {
+    let id = req.param("id")?.parse()?;
+    let id = ImageId(id);
+
+    let app = req.state();
+    let body = tide::Body::from_bytes(app.get_image(&id)?);
+    Ok(body)
+}
+
 #[derive(Debug, Deserialize)]
 struct SetRatingsRequest {
     name: String,
@@ -246,6 +255,8 @@ impl Server {
             .get(get_rating)
             .put(put_rating)
             .delete(delete_rating);
+
+        app.at("/images/:id").get(get_image);
 
         Ok(Server {
             app,
