@@ -113,6 +113,9 @@ class ShowPage {
   }
 
   render_show() {
+    const poster = document.getElementById("poster");
+    poster.src = "/images/" + this.show.image;
+
     const title_node = document.getElementById("show-title");
     title_node.innerHTML = "<h1>" + this.show.name + "</h1>";
 

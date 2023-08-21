@@ -9,22 +9,32 @@
     <title>TV Tracker</title>
   </head>
   <body>
-    <h1 id="show-title"></h1>
-    <div id="watch-buttons">
-      <input id="mark-all-watched" , type="button" value="Mark aired watched" />
-      <input
-        id="mark-all-unwatched"
-        ,
-        type="button"
-        value="Mark all unwatched"
-      />
-      <input id="pause" , type="button" value="Pause show" />
-      <input id="remove-show" , type="button" value="Remove show" />
+    <div id="show-header-container">
+      <img id="poster" />
+      <div>
+        <h1 id="show-title"></h1>
+        <div id="watch-buttons">
+          <input
+            id="mark-all-watched"
+            ,
+            type="button"
+            value="Mark aired watched"
+          />
+          <input
+            id="mark-all-unwatched"
+            ,
+            type="button"
+            value="Mark all unwatched"
+          />
+          <input id="pause" , type="button" value="Pause show" />
+          <input id="remove-show" , type="button" value="Remove show" />
+        </div>
+        <label for="ratings">Rating: </label>
+        <select name="Show Rating" id="ratings">
+          <option id="no-rating-option">None</option>
+        </select>
+      </div>
     </div>
-    <label for="ratings">Rating: </label>
-    <select name="Show Rating" id="ratings">
-      <option id="no-rating-option">None</option>
-    </select>
     <div id="show-seasons"></div>
   </body>
 </html>

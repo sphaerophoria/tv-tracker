@@ -13,3 +13,16 @@
 #watch-buttons {
   display: flex
 }
+
+#show-header-container {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: min-content auto;
+}
+
+#poster {
+  margin-right: 12px;
+  border-radius: var(--card-border-radius);
+  min-width: 210px;
+  grid-row-end: span 3;
+}
