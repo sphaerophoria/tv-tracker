@@ -38,7 +38,7 @@ async function handle_add(item) {
 
 function render_show(item, parent) {
   const href = item.url;
-  const card = render_card_element(item, href, []);
+  const card = render_card_element(item, href);
 
   const add_button = document.createElement("input");
   add_button.type = "button";

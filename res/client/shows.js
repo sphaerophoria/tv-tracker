@@ -12,20 +12,9 @@ function render_shows(shows, parent) {
 
   let ret = "";
   for (const show of shows) {
-    let pause_class = "unpaused";
-    if (show.pause_status) {
-      pause_class = "paused";
-    }
-
-    const extra_classes = [pause_class];
     const href = "/show.html?show_id=" + show.id;
 
-    let progress = 0;
-    if (show.episodes_aired > 0) {
-      progress = show.episodes_watched / show.episodes_aired;
-    }
-
-    const card = render_card_element(show, href, extra_classes, progress);
+    const card = render_card_element(show, href);
     parent.appendChild(card);
   }
   return ret;

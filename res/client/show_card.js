@@ -1,11 +1,12 @@
 "use strict";
 
 // Used for both remote shows and full shows
-export function render_card_element(show, href, extra_classes, progress) {
+export function render_card_element(show, href) {
   const card = document.createElement("div");
   card.classList.add("show-card");
-  for (const klass of extra_classes) {
-    card.classList.add(klass);
+
+  if (show.pause_status !== undefined && show.pause_status) {
+    card.classList.add("paused");
   }
 
   const link = document.createElement("a");
@@ -14,7 +15,11 @@ export function render_card_element(show, href, extra_classes, progress) {
 
   if (show.image !== null) {
     const poster = document.createElement("img");
-    poster.src = "/images/" + show.image;
+    if (typeof show.image == "string" && show.image.startsWith("http")) {
+      poster.src = show.image;
+    } else {
+      poster.src = "/images/" + show.image;
+    }
     link.appendChild(poster);
   } else {
     const poster = document.createElement("div");
@@ -29,6 +34,11 @@ export function render_card_element(show, href, extra_classes, progress) {
   const watched_div = document.createElement("div");
   watched_div.classList.add("num-watched");
   progress_div.appendChild(watched_div);
+
+  let progress = 0;
+  if (show.episodes_aired !== undefined && show.episodes_aired > 0) {
+    progress = show.episodes_watched / show.episodes_aired;
+  }
 
   if (progress !== undefined) {
     watched_div.style.width = "" + progress * 100 + "%";
