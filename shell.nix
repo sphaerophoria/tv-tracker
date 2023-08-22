@@ -8,6 +8,8 @@ pkgs.mkShell {
     openssl
     pkg-config
     python3
+    python3Packages.black
+    ruff
     rust-analyzer
     rustup
     sqlite
