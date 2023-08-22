@@ -27,7 +27,7 @@ function handle_search_keypress(event) {
 }
 
 async function handle_add(item) {
-  const request = new Request("/shows", {
+  const request = new Request("shows", {
     method: "PUT",
     body: JSON.stringify({
       remote_id: item,
@@ -52,7 +52,7 @@ function render_show(item, parent) {
 
 async function execute_search() {
   const params = new URLSearchParams({ query: get_search_box().value });
-  const request = new Request("/search?" + params.toString(), {
+  const request = new Request("search?" + params.toString(), {
     method: "GET",
   });
   const response = await fetch(request);

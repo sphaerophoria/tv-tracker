@@ -23,7 +23,7 @@ function render_date_shows(date_shows, date_it, parent) {
   parent.appendChild(div);
 
   for (const show of date_shows) {
-    const href = "/show.html?show_id=" + show.id;
+    const href = "show.html?show_id=" + show.id;
     let elem = render_card_element(show, href, []);
     div.appendChild(elem);
   }

@@ -32,7 +32,7 @@ function group_episodes_by_seasons(episodes) {
 
 async function remove_show(show_id) {
   await delete_show(show_id);
-  window.location.href = "/shows.html";
+  window.location.href = "shows.html";
 }
 
 class ShowPage {
@@ -114,7 +114,7 @@ class ShowPage {
 
   render_show() {
     const poster = document.getElementById("poster");
-    poster.src = "/images/" + this.show.image;
+    poster.src = "images/" + this.show.image;
 
     const title_node = document.getElementById("show-title");
     title_node.innerHTML = "<h1>" + this.show.name + "</h1>";

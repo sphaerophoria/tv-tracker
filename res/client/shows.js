@@ -12,7 +12,7 @@ function render_shows(shows, parent) {
 
   let ret = "";
   for (const show of shows) {
-    const href = "/show.html?show_id=" + show.id;
+    const href = "show.html?show_id=" + show.id;
 
     const card = render_card_element(show, href);
     parent.appendChild(card);

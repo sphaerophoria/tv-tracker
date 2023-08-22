@@ -18,7 +18,7 @@ export function render_card_element(show, href) {
     if (typeof show.image == "string" && show.image.startsWith("http")) {
       poster.src = show.image;
     } else {
-      poster.src = "/images/" + show.image;
+      poster.src = "images/" + show.image;
     }
     link.appendChild(poster);
   } else {
