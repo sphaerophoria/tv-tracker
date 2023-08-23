@@ -158,10 +158,22 @@ function find_higher_priority(array, target_priority) {
   return find_closest_with_thresh(array, target_priority, (a, b) => a > b);
 }
 
+async function add_rating() {
+  const add_rating_input = document.getElementById("add-rating-text");
+  await put_ratings({
+    name: add_rating_input.value,
+  });
+  add_rating_input.value = "";
+  init();
+}
+
 async function init() {
   const ratings = await get_ratings();
   const page = new RatingsPage(ratings);
   page.render();
+
+  const add_button = document.getElementById("add-button");
+  add_button.onclick = add_rating;
 }
 
 init();
