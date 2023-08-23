@@ -143,7 +143,7 @@ class ShowPage {
     ratings_selector.add(no_rating_option);
 
     let ratings = Object.values(this.ratings).sort(
-      (a, b) => a.priority >= b.priority
+      (a, b) => a.priority - b.priority
     );
     for (const rating of ratings) {
       let option = document.createElement("option");

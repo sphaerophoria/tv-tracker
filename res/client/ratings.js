@@ -42,7 +42,7 @@ class RatingsPage {
 
   render() {
     let ratings = Object.values(this.ratings);
-    ratings.sort((a, b) => a.priority >= b.priority);
+    ratings.sort((a, b) => a.priority - b.priority);
 
     let div = document.getElementById("ratings-div");
     div.innerHTML = "";

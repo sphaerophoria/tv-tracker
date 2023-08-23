@@ -4,7 +4,9 @@ import { get_shows, get_ratings } from "./http.js";
 import { render_card_element } from "./show_card.js";
 
 function sort_shows_by_name(shows) {
-  shows.sort((a, b) => a.name.toLowerCase() > b.name.toLowerCase());
+  shows.sort((a, b) => {
+    return a.name.toLowerCase() > b.name.toLowerCase() ? 1 : -1;
+  });
 }
 
 function render_shows(shows, parent) {
@@ -36,7 +38,7 @@ async function render_by_group(groups, div) {
 function group_by_rating(shows_obj, ratings_obj) {
   let shows = Object.values(shows_obj);
   let ratings = Object.values(ratings_obj).sort(
-    (a, b) => a.priority >= b.priority
+    (a, b) => a.priority - b.priority
   );
   let groups = [];
 

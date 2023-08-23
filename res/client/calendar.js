@@ -9,7 +9,7 @@ function date_to_string(date) {
 
 function sort_by_date(episodes) {
   episodes.sort((a, b) => {
-    return new Date(a.airdate) > new Date(b.airdate);
+    return new Date(a.airdate) > new Date(b.airdate) ? 1 : -1;
   });
 }
 
