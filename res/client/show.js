@@ -30,6 +30,12 @@ function group_episodes_by_seasons(episodes) {
   return season_episodes;
 }
 
+function show_youtube_search_url(show) {
+  let query = show.name.replace(" ", "+");
+  query += "+trailer";
+  return "https://www.youtube.com/results?search_query=" + query;
+}
+
 async function remove_show(show_id) {
   await delete_show(show_id);
   window.location.href = "shows.html";
@@ -127,6 +133,9 @@ class ShowPage {
       set_pause_button.value = "Pause show";
     }
     set_pause_button.onclick = () => this.pause_show();
+
+    const youtube_link = document.getElementById("youtube-link");
+    youtube_link.href = show_youtube_search_url(this.show);
 
     const div = document.getElementById("show-seasons");
     div.innerHTML = "";

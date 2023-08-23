@@ -26,3 +26,8 @@
   min-width: 210px;
   grid-row-end: span 3;
 }
+
+#youtube-img {
+  background: transparent;
+  height: 32px;
+}
