@@ -1,8 +1,8 @@
 use crate::{
     tv_maze::TvMazeShowId,
     types::{
-        EpisodeId, ImageId, ImdbShowId, Rating, RatingId, RemoteEpisode, RemoteTvShow, ShowId,
-        TvEpisode, TvShow, TvdbShowId,
+        EpisodeId, ImageId, ImdbShowId, Movie, MovieId, Rating, RatingId, RemoteEpisode,
+        RemoteMovie, RemoteTvShow, ShowId, TvEpisode, TvShow, TvdbShowId,
     },
 };
 
@@ -173,8 +173,8 @@ const GET_SHOWS_QUERY: &str =
         ON shows.id = epi_count.show_id
     LEFT JOIN
         (
-            SELECT show_id, COUNT(*) as count FROM watch_status
-            LEFT JOIN episodes WHERE episodes.id = watch_status.episode_id
+            SELECT show_id, COUNT(*) as count FROM episode_watch_status
+            LEFT JOIN episodes WHERE episodes.id = episode_watch_status.episode_id
             GROUP BY show_id
         ) as watch_count
         ON shows.id = watch_count.show_id
@@ -246,6 +246,64 @@ pub enum GetImageUrlError {
     GetImageUrl(#[source] rusqlite::Error),
 }
 
+#[derive(Error, Debug)]
+pub enum AddMovieError {
+    #[error("failed to start transaction")]
+    StartTransaction(#[source] rusqlite::Error),
+    #[error("failed to check if movie is in db")]
+    FindRemote(#[source] rusqlite::Error),
+    #[error("failed to insert movie into db")]
+    Insert(#[source] rusqlite::Error),
+    #[error("failed to commit transaction")]
+    Commit(#[source] rusqlite::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum GetMovieError {
+    #[error("failed to prepare statement")]
+    Prepare(#[source] rusqlite::Error),
+    #[error("failed to execute query")]
+    Execute(#[source] rusqlite::Error),
+    #[error("failed to get row")]
+    GetRow(#[source] rusqlite::Error),
+    #[error("failed to get id from row")]
+    GetId(#[source] rusqlite::Error),
+    #[error("failed to get imdb id from row")]
+    GetImdbId(#[source] rusqlite::Error),
+    #[error("failed to get name from row")]
+    GetName(#[source] rusqlite::Error),
+    #[error("failed to get year from row")]
+    GetYear(#[source] rusqlite::Error),
+    #[error("failed to get image from row")]
+    GetImage(#[source] rusqlite::Error),
+    #[error("failed to get theater release date from row")]
+    GetTheaterReleaseDate(#[source] rusqlite::Error),
+    #[error("failed to get home release date from row")]
+    GetHomeReleaseDate(#[source] rusqlite::Error),
+    #[error("failed to get watch date from row")]
+    GetWatchDate(#[source] rusqlite::Error),
+    #[error("failed to get rating id from row")]
+    GetRatingId(#[source] rusqlite::Error),
+    #[error("not enough rows in query response")]
+    NotEnoughRows,
+    #[error("too many rows in query response")]
+    TooManyRows,
+}
+
+#[derive(Error, Debug)]
+pub enum DeleteMovieError {
+    #[error("failed to start transaction")]
+    StartTransaction(#[source] rusqlite::Error),
+    #[error("failed to remove ratings")]
+    RemoveRatings(#[source] rusqlite::Error),
+    #[error("failed to remove watch status")]
+    RemoveWatchStatus(#[source] rusqlite::Error),
+    #[error("failed to remove movie")]
+    RemoveMovie(#[source] rusqlite::Error),
+    #[error("failed to commit transaction")]
+    Commit(#[source] rusqlite::Error),
+}
+
 pub struct Db {
     connection: Connection,
 }
@@ -274,21 +332,8 @@ impl Db {
             .transaction()
             .map_err(AddShowError::StartTransaction)?;
 
-        let image_id = match &show.image {
-            Some(image_url) => {
-                transaction
-                    .execute(
-                        "
-                        INSERT INTO images(url)
-                        VALUES (?1)
-                        ",
-                        [image_url],
-                    )
-                    .map_err(AddShowError::Insert)?;
-                Some(transaction.last_insert_rowid())
-            }
-            None => None,
-        };
+        let image_id = insert_image_into_images_table(&transaction, show.image.as_deref())
+            .map_err(AddShowError::Insert)?;
 
         transaction
             .execute(
@@ -328,7 +373,7 @@ impl Db {
         transaction
             .execute(
                 "
-                DELETE FROM watch_status WHERE episode_id IN (
+                DELETE FROM episode_watch_status WHERE episode_id IN (
                     SELECT id FROM episodes WHERE show_id = ?1
                 )
                 ",
@@ -485,7 +530,7 @@ impl Db {
     pub fn get_episode(&self, episode_id: &EpisodeId) -> Result<TvEpisode, GetEpisodeError> {
         let mut statement = self
             .connection
-            .prepare("SELECT id, show_id, name, season, episode, airdate, watch_date FROM episodes LEFT JOIN watch_status ON episodes.id = watch_status.episode_id WHERE id = ?1")
+            .prepare("SELECT id, show_id, name, season, episode, airdate, watch_date FROM episodes LEFT JOIN episode_watch_status ON episodes.id = episode_watch_status.episode_id WHERE id = ?1")
             .map_err(GetEpisodeError::Prepare)?;
 
         let mut rows = statement
@@ -519,7 +564,7 @@ impl Db {
     ) -> Result<HashMap<EpisodeId, TvEpisode>, GetEpisodeError> {
         let mut statement = self
             .connection
-            .prepare("SELECT id, show_id, name, season, episode, airdate, watch_date FROM episodes LEFT JOIN watch_status ON episodes.id = watch_status.episode_id WHERE show_id = ?1")
+            .prepare("SELECT id, show_id, name, season, episode, airdate, watch_date FROM episodes LEFT JOIN episode_watch_status ON episodes.id = episode_watch_status.episode_id WHERE show_id = ?1")
             .map_err(GetEpisodeError::Prepare)?;
 
         let mut rows = statement
@@ -557,7 +602,7 @@ impl Db {
             self.connection
                 .execute(
                     "
-                    INSERT OR IGNORE INTO watch_status(episode_id, watch_date)
+                    INSERT OR IGNORE INTO episode_watch_status(episode_id, watch_date)
                     VALUES (?1, ?2)
                     ",
                     params![episode.0, date.num_days_from_ce()],
@@ -567,7 +612,7 @@ impl Db {
             self.connection
                 .execute(
                     "
-                    DELETE FROM watch_status
+                    DELETE FROM episode_watch_status
                     WHERE episode_id = ?1
                     ",
                     [episode.0],
@@ -615,7 +660,7 @@ impl Db {
             .prepare(
                 "
                 SELECT id, show_id, name, season, episode, airdate, watch_date FROM episodes
-                LEFT JOIN watch_status on episodes.id = watch_status.episode_id
+                LEFT JOIN episode_watch_status on episodes.id = episode_watch_status.episode_id
                 WHERE airdate IS NOT NULL AND airdate >= ?1 AND airdate <= ?2
                 ",
             )
@@ -831,6 +876,159 @@ impl Db {
         let url = row.get(0).map_err(GetImageUrlError::GetImageUrl)?;
         Ok(url)
     }
+
+    pub fn add_movie(&mut self, movie: &RemoteMovie) -> Result<MovieId, AddMovieError> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(AddMovieError::StartTransaction)?;
+
+        if let Some(id) =
+            find_remote_movie_in_db(&transaction, movie).map_err(AddMovieError::FindRemote)?
+        {
+            return Ok(id);
+        }
+
+        let image_id = insert_image_into_images_table(&transaction, Some(&movie.image))
+            .expect("movie should always have image");
+
+        transaction
+            .execute(
+                "
+                INSERT INTO
+                movies(imdb_id, name, year, image, theater_release_date, home_release_date)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ",
+                params![
+                    movie.imdb_id,
+                    movie.name,
+                    movie.year,
+                    image_id,
+                    movie
+                        .theater_release_date
+                        .map(|date| date.num_days_from_ce()),
+                    movie.home_release_date.map(|date| date.num_days_from_ce()),
+                ],
+            )
+            .map_err(AddMovieError::Insert)?;
+
+        let id = transaction.last_insert_rowid();
+        transaction.commit().map_err(AddMovieError::Commit)?;
+
+        Ok(MovieId(id))
+    }
+
+    pub fn get_movies(&self) -> Result<Vec<Movie>, GetMovieError> {
+        get_movies(&self.connection, None)
+    }
+
+    pub fn get_movie(&self, id: &MovieId) -> Result<Movie, GetMovieError> {
+        let mut movies = get_movies(&self.connection, Some(*id))?;
+
+        if movies.len() > 1 {
+            return Err(GetMovieError::TooManyRows);
+        }
+
+        movies.pop().ok_or(GetMovieError::NotEnoughRows)
+    }
+
+    pub fn delete_movie(&mut self, id: &MovieId) -> Result<(), DeleteMovieError> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(DeleteMovieError::StartTransaction)?;
+
+        transaction
+            .execute(
+                "
+            DELETE FROM movie_ratings WHERE movie_id = ?1
+            ",
+                [id.0],
+            )
+            .map_err(DeleteMovieError::RemoveRatings)?;
+
+        transaction
+            .execute(
+                "
+            DELETE FROM movie_watch_status WHERE movie_id = ?1
+            ",
+                [id.0],
+            )
+            .map_err(DeleteMovieError::RemoveWatchStatus)?;
+
+        transaction
+            .execute(
+                "
+            DELETE FROM movies WHERE id = ?1
+            ",
+                [id.0],
+            )
+            .map_err(DeleteMovieError::RemoveMovie)?;
+
+        transaction.commit().map_err(DeleteMovieError::Commit)?;
+
+        Ok(())
+    }
+
+    pub fn set_movie_rating(
+        &self,
+        movie_id: &MovieId,
+        rating_id: &Option<RatingId>,
+    ) -> Result<(), SetShowRatingError> {
+        if let Some(rating_id) = rating_id {
+            self.connection
+                .execute(
+                    "
+                    INSERT INTO movie_ratings(movie_id, rating_id)
+                    VALUES (?1, ?2)
+                    ON CONFLICT(movie_id) DO UPDATE SET rating_id = ?2
+                    ",
+                    [movie_id.0, rating_id.0],
+                )
+                .map_err(SetShowRatingError)?;
+        } else {
+            self.connection
+                .execute(
+                    "
+                    DELETE FROM movie_ratings WHERE movie_id = ?1
+                    ",
+                    [movie_id.0],
+                )
+                .map_err(SetShowRatingError)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn set_movie_watch_status(
+        &self,
+        id: &MovieId,
+        watched: &Option<NaiveDate>,
+    ) -> Result<(), SetWatchStatusError> {
+        if let Some(date) = watched {
+            self.connection
+                .execute(
+                    "
+                    INSERT OR IGNORE INTO movie_watch_status(movie_id, watch_date)
+                    VALUES (?1, ?2)
+                    ",
+                    params![id.0, date.num_days_from_ce()],
+                )
+                .map_err(SetWatchStatusError)?;
+        } else {
+            self.connection
+                .execute(
+                    "
+                    DELETE FROM movie_watch_status
+                    WHERE movie_id = ?1
+                    ",
+                    [id.0],
+                )
+                .map_err(SetWatchStatusError)?;
+        }
+
+        Ok(())
+    }
 }
 
 fn show_ids_to_comma_separated<'a, I: Iterator<Item = &'a ShowId>>(mut it: I) -> String {
@@ -865,6 +1063,67 @@ fn get_show_with_connection(
     }
 
     Ok(ret.pop().expect("Inserted show does not exist"))
+}
+
+fn get_movies(
+    connection: &Connection,
+    movie_id: Option<MovieId>,
+) -> Result<Vec<Movie>, GetMovieError> {
+    use GetMovieError::*;
+
+    let mut query_str =
+        "
+        SELECT id, imdb_id, name, year, image, theater_release_date, home_release_date, movie_watch_status.watch_date, movie_ratings.rating_id
+        FROM movies
+        LEFT JOIN movie_watch_status ON movies.id = movie_watch_status.movie_id
+        LEFT JOIN movie_ratings ON movies.id = movie_ratings.movie_id
+        ".to_string();
+
+    if let Some(movie_id) = movie_id {
+        query_str.push_str(&format!("WHERE id = {}", movie_id.0));
+    }
+
+    let mut statement = connection.prepare(&query_str).map_err(Prepare)?;
+
+    let mut rows = statement.query([]).map_err(Execute)?;
+
+    let mut ret = Vec::new();
+    while let Some(row) = rows.next().map_err(GetMovieError::GetRow)? {
+        let id = row.get(0).map_err(GetId)?;
+        let id = MovieId(id);
+
+        let imdb_id = row.get(1).map_err(GetImdbId)?;
+        let name = row.get(2).map_err(GetName)?;
+        let year = row.get(3).map_err(GetYear)?;
+        let image: i64 = row.get(4).map_err(GetImage)?;
+        let image = ImageId(image);
+
+        let theater_release_date: Option<i32> = row.get(5).map_err(GetTheaterReleaseDate)?;
+        let theater_release_date =
+            theater_release_date.and_then(NaiveDate::from_num_days_from_ce_opt);
+
+        let home_release_date: Option<i32> = row.get(6).map_err(GetHomeReleaseDate)?;
+        let home_release_date = home_release_date.and_then(NaiveDate::from_num_days_from_ce_opt);
+
+        let watch_date: Option<i64> = row.get(7).map_err(GetWatchDate)?;
+        let watched = watch_date.is_some();
+        let rating_id: Option<i64> = row.get(8).map_err(GetRatingId)?;
+        let rating_id = rating_id.map(RatingId);
+
+        ret.push(Movie {
+            id,
+            imdb_id,
+            name,
+            year,
+            image,
+            watched,
+            rating_id,
+            theater_release_date,
+            home_release_date,
+        });
+    }
+
+    Ok(ret)
 }
 
 fn get_shows_with_filter(
@@ -1230,6 +1489,48 @@ fn upgrade_v4_v5(connection: &mut Connection) -> Result<(), DbCreationError> {
     Ok(())
 }
 
+fn upgrade_v5_v6(connection: &mut Connection) -> Result<(), DbCreationError> {
+    let transaction = connection
+        .transaction()
+        .map_err(DbCreationError::StartTransaction)?;
+
+    transaction
+        .execute_batch(
+            "
+            CREATE TABLE movies(
+                id INTEGER PRIMARY KEY NOT NULL,
+                imdb_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                year INTEGER,
+                image INTEGER,
+                theater_release_date INTEGER,
+                home_release_date INTEGER,
+                FOREIGN KEY(image) REFERENCES images(id)
+            );
+            ALTER TABLE watch_status RENAME TO episode_watch_status;
+            CREATE TABLE movie_watch_status(
+                movie_id INTEGER PRIMARY KEY NOT NULL,
+                watch_date INTEGER NOT NULL,
+                FOREIGN KEY(movie_id) REFERENCES movies(id)
+            );
+            CREATE TABLE movie_ratings(
+                movie_id INTEGER PRIMARY KEY NOT NULL,
+                rating_id INTEGER NOT NULL,
+                FOREIGN KEY(movie_id) REFERENCES movies(id),
+                FOREIGN KEY(rating_id) REFERENCES ratings(id)
+            );
+            PRAGMA user_version = 6;
+            ",
+        )
+        .map_err(DbCreationError::CreateRatings)?;
+
+    transaction
+        .commit()
+        .map_err(DbCreationError::CommitTransaction)?;
+
+    Ok(())
+}
+
 fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationError> {
     let version: usize = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -1241,6 +1542,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
         upgrade_v2_v3,
         upgrade_v3_v4,
         upgrade_v4_v5,
+        upgrade_v5_v6,
     ];
 
     for f in upgrade_functions.iter().skip(version) {
@@ -1251,9 +1553,42 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(DbCreationError::GetVersion)?;
 
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
 
     Ok(())
+}
+
+fn insert_image_into_images_table(
+    connection: &Connection,
+    url: Option<&str>,
+) -> Result<Option<i64>, rusqlite::Error> {
+    match url {
+        Some(image_url) => {
+            connection.execute(" INSERT INTO images(url) VALUES (?1)", [image_url])?;
+            Ok(Some(connection.last_insert_rowid()))
+        }
+        None => Ok(None),
+    }
+}
+
+fn find_remote_movie_in_db(
+    connection: &Connection,
+    movie: &RemoteMovie,
+) -> Result<Option<MovieId>, rusqlite::Error> {
+    let mut check_exists_statement = connection.prepare(
+        "
+        SELECT id FROM movies WHERE imdb_id = ?1
+        ",
+    )?;
+
+    let mut rows = check_exists_statement.query([&movie.imdb_id])?;
+
+    if let Some(row) = rows.next()? {
+        let id: Option<i64> = row.get(0)?;
+        Ok(id.map(MovieId))
+    } else {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -1285,6 +1620,19 @@ mod test {
             image: image_url,
             imdb_id: show.imdb_id.clone(),
             tvdb_id: show.tvdb_id.clone(),
+        }
+    }
+
+    fn remote_from_movie(movie: &Movie, db: &Db) -> RemoteMovie {
+        let image_url = db.get_image_url(&movie.image).expect("Failed to get image");
+
+        RemoteMovie {
+            imdb_id: movie.imdb_id.clone(),
+            name: movie.name.clone(),
+            year: movie.year,
+            image: image_url.clone(),
+            theater_release_date: movie.theater_release_date,
+            home_release_date: movie.home_release_date,
         }
     }
 
@@ -1702,5 +2050,123 @@ mod test {
         assert_eq!(retrieved_shows[&ids[0]].rating_id, None);
         assert_eq!(retrieved_shows[&ids[1]].rating_id, None);
         assert_eq!(retrieved_shows[&ids[2]].rating_id, None);
+    }
+
+    #[test]
+    fn test_full_movie_in_out() {
+        let movie = RemoteMovie {
+            imdb_id: "test".to_string(),
+            name: "movie".to_string(),
+            year: 1234,
+            image: "http://image".to_string(),
+            theater_release_date: Some(gen_date(1234)),
+            home_release_date: Some(gen_date(1244)),
+        };
+
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+
+        let movie_id = db.add_movie(&movie).expect("Failed to add movie");
+
+        let inserted_movie = db.get_movie(&movie_id).expect("Failed to get show");
+
+        assert_eq!(remote_from_movie(&inserted_movie, &db), movie);
+
+        let movies = db.get_movies().expect("Failed to get movie");
+        assert_eq!(movies.len(), 1);
+        assert_eq!(inserted_movie, movies[0]);
+    }
+
+    #[test]
+    fn test_add_duplicate_movie() {
+        let movie = RemoteMovie {
+            imdb_id: "test".to_string(),
+            name: "movie".to_string(),
+            year: 1234,
+            image: "http://image".to_string(),
+            theater_release_date: Some(gen_date(1234)),
+            home_release_date: Some(gen_date(1244)),
+        };
+
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+
+        let movie_id = db.add_movie(&movie).expect("Failed to add movie");
+        let movie_id2 = db.add_movie(&movie).expect("Failed to add movie");
+        assert_eq!(movie_id, movie_id2);
+    }
+
+    #[test]
+    fn test_watch_movie() {
+        let movie = RemoteMovie {
+            imdb_id: "test".to_string(),
+            name: "movie".to_string(),
+            year: 1234,
+            image: "http://image".to_string(),
+            theater_release_date: Some(gen_date(1234)),
+            home_release_date: Some(gen_date(1244)),
+        };
+
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+        let movie_id = db.add_movie(&movie).expect("Failed to add movie");
+        let movie = db.get_movie(&movie_id).expect("Failed to get movie");
+        assert_eq!(movie.watched, false);
+
+        db.set_movie_watch_status(&movie_id, &Some(gen_date(1234)))
+            .expect("Failed to set watch status");
+        let movie = db.get_movie(&movie_id).expect("Failed to get movie");
+        assert_eq!(movie.watched, true);
+
+        db.set_movie_watch_status(&movie_id, &None)
+            .expect("Failed to set watch status");
+        let movie = db.get_movie(&movie_id).expect("Failed to get movie");
+        assert_eq!(movie.watched, false);
+    }
+
+    #[test]
+    fn test_rate_movie() {
+        let movie = RemoteMovie {
+            imdb_id: "test".to_string(),
+            name: "movie".to_string(),
+            year: 1234,
+            image: "http://image".to_string(),
+            theater_release_date: Some(gen_date(1234)),
+            home_release_date: Some(gen_date(1244)),
+        };
+
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+        let movie_id = db.add_movie(&movie).expect("Failed to add movie");
+        let movie = db.get_movie(&movie_id).expect("Failed to get movie");
+        assert_eq!(movie.rating_id, None);
+
+        let rating_id = db.add_rating("test").expect("Failed to add rating");
+
+        db.set_movie_rating(&movie_id, &Some(rating_id))
+            .expect("Failed to add rating");
+        let movie = db.get_movie(&movie_id).expect("Failed to get movie");
+        assert_eq!(movie.rating_id, Some(rating_id));
+
+        db.set_movie_rating(&movie_id, &None)
+            .expect("Failed to add rating");
+        let movie = db.get_movie(&movie_id).expect("Failed to get movie");
+        assert_eq!(movie.rating_id, None);
+    }
+
+    #[test]
+    fn test_delete_movie() {
+        let movie = RemoteMovie {
+            imdb_id: "test".to_string(),
+            name: "movie".to_string(),
+            year: 1234,
+            image: "http://image".to_string(),
+            theater_release_date: Some(gen_date(1234)),
+            home_release_date: Some(gen_date(1244)),
+        };
+
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+        let movie_id = db.add_movie(&movie).expect("Failed to add movie");
+        db.get_movie(&movie_id).expect("Failed to get movie");
+
+        db.delete_movie(&movie_id).expect("failed to delete movie");
+        assert!(db.get_movie(&movie_id).is_err());
+        assert_eq!(db.get_movies().expect("failed to get movies").len(), 0);
     }
 }

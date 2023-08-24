@@ -43,6 +43,13 @@ pub struct TvShowUpdate {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct MovieUpdate {
+    pub id: MovieId,
+    pub watch_date: Option<chrono::NaiveDate>,
+    pub rating_id: Option<RatingId>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct RemoteEpisode {
     pub name: String,
     pub season: i64,
@@ -68,6 +75,29 @@ pub struct Rating {
     pub priority: usize,
 }
 
+#[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct RemoteMovie {
+    pub imdb_id: String,
+    pub name: String,
+    pub year: i32,
+    pub image: String,
+    pub theater_release_date: Option<chrono::NaiveDate>,
+    pub home_release_date: Option<chrono::NaiveDate>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct Movie {
+    pub id: MovieId,
+    pub imdb_id: String,
+    pub name: String,
+    pub image: ImageId,
+    pub year: i32,
+    pub watched: bool,
+    pub rating_id: Option<RatingId>,
+    pub theater_release_date: Option<chrono::NaiveDate>,
+    pub home_release_date: Option<chrono::NaiveDate>,
+}
+
 macro_rules! impl_id {
     ($name:ident) => {
         #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -79,3 +109,4 @@ impl_id!(ShowId);
 impl_id!(EpisodeId);
 impl_id!(RatingId);
 impl_id!(ImageId);
+impl_id!(MovieId);

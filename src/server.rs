@@ -9,7 +9,7 @@ use std::{fs::File, path::Path};
 use crate::{
     app::App,
     tv_maze::TvMazeShowId,
-    types::{EpisodeId, ImageId, Rating, RatingId, ShowId, TvShowUpdate},
+    types::{EpisodeId, ImageId, MovieId, MovieUpdate, Rating, RatingId, ShowId, TvShowUpdate},
 };
 
 #[derive(Error, Debug)]
@@ -201,6 +201,55 @@ async fn delete_rating(req: tide::Request<App>) -> tide::Result<serde_json::Valu
     Ok(serde_json::to_value(app.delete_rating(&id)?)?)
 }
 
+#[derive(Debug, Deserialize)]
+struct PutMoviesRequest {
+    imdb_id: String,
+}
+
+async fn get_movies(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let app = req.state();
+    let movies = app.get_movies()?;
+    Ok(serde_json::to_value(movies)?)
+}
+
+async fn put_movies(mut req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let params: PutMoviesRequest = req.body_json().await?;
+    let app = req.state();
+    let movie = app.add_movie(&params.imdb_id)?;
+    Ok(serde_json::to_value(movie)?)
+}
+
+async fn get_movie(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let id: i64 = req.param("id")?.parse()?;
+    let id = MovieId(id);
+
+    let app = req.state();
+    let movie = app.get_movie(&id)?;
+    Ok(serde_json::to_value(movie)?)
+}
+
+async fn put_movie(mut req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let id: i64 = req.param("id")?.parse()?;
+    let id = MovieId(id);
+
+    let params: MovieUpdate = req.body_json().await?;
+    if params.id != id {
+        return Err(NonMatchingId.into());
+    }
+
+    let app = req.state();
+    Ok(serde_json::to_value(app.update_movie(&params)?)?)
+}
+
+async fn delete_movie(req: tide::Request<App>) -> tide::Result<tide::StatusCode> {
+    let id: i64 = req.param("id")?.parse()?;
+    let id = MovieId(id);
+
+    let app = req.state();
+    app.delete_movie(&id)?;
+    Ok(tide::StatusCode::Ok)
+}
+
 #[derive(Error, Debug)]
 pub enum ServerCreationError {
     #[error("failed to extract client")]
@@ -243,6 +292,7 @@ impl Server {
             .get(get_show)
             .put(put_show)
             .delete(delete_show);
+
         app.at("/shows/:id/episodes").get(get_episodes_for_show);
         app.at("/search").get(handle_search);
         app.at("/episodes").get(get_episodes);
@@ -257,6 +307,13 @@ impl Server {
             .delete(delete_rating);
 
         app.at("/images/:id").get(get_image);
+
+        app.at("/movies").get(get_movies).put(put_movies);
+
+        app.at("/movies/:id")
+            .get(get_movie)
+            .put(put_movie)
+            .delete(delete_movie);
 
         Ok(Server {
             app,
