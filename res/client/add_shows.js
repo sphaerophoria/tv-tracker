@@ -59,6 +59,7 @@ async function execute_search() {
   const response_body = await response.json();
 
   const search_results = document.getElementById("search-results");
+  search_results.innerHTML = "";
 
   for (const i in response_body) {
     const item = response_body[i];
