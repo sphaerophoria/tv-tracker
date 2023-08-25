@@ -40,7 +40,8 @@ struct Args {
     port: i16,
     db_path: PathBuf,
     cache_path: PathBuf,
-    omdb_api_key: String,
+    omdb_key_path: PathBuf,
+    poll_indexers: bool,
 }
 
 impl Args {
@@ -52,7 +53,8 @@ impl Args {
         let mut db_path = None;
         let mut port = None;
         let mut cache_path = None;
-        let mut omdb_api_key = None;
+        let mut omdb_key_path = None;
+        let mut poll_indexers = true;
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--help" => {
@@ -71,7 +73,12 @@ impl Args {
                 "--port" => {
                     port = args.next().map(|s| s.parse());
                 }
-                "--omdb-api-key" => omdb_api_key = args.next(),
+                "--omdb-key-path" => {
+                    omdb_key_path = args.next().map(Into::into);
+                }
+                "--no-poll" => {
+                    poll_indexers = false;
+                }
                 _ => {
                     return Err(ArgParseError::UnknownArg(arg));
                 }
@@ -83,14 +90,15 @@ impl Args {
             .map_err(ArgParseError::InvalidPort)?;
         let db_path = db_path.ok_or(ArgParseError::NoDbPath)?;
         let cache_path = cache_path.ok_or(ArgParseError::NoCachePath)?;
-        let omdb_api_key = omdb_api_key.ok_or(ArgParseError::NoOmdbApiKeyProvided)?;
+        let omdb_key_path = omdb_key_path.ok_or(ArgParseError::NoOmdbApiKeyProvided)?;
 
         let ret = Args {
             html_path,
             port,
             db_path,
             cache_path,
-            omdb_api_key,
+            omdb_key_path,
+            poll_indexers,
         };
 
         Ok(ret)
@@ -113,7 +121,8 @@ impl Args {
                 debugging\n\
                 --db-path: Where to store database\n\
                 --port: Port to serve UI on\n\
-                --omdb-api-key: Api key for OMDB\n\
+                --omdb-key-path: Path to file containing omdb api key\n\
+                --no-poll: Optional, when passed will not poll remote indexers for new data\n\
                 "
         )
     }
@@ -132,10 +141,11 @@ fn main() {
         }
     };
 
-    let omdb_indexer = OmdbIndexer::new(args.omdb_api_key);
+    let omdb_key = std::fs::read_to_string(args.omdb_key_path).expect("Failed to read omdb key");
+    let omdb_indexer = OmdbIndexer::new(omdb_key.trim().to_string());
     let db = Db::new(&args.db_path).expect("Failed to create db");
     let poster_cache = ImageCache::new(args.cache_path.join("posters"));
-    let app = App::new(db, omdb_indexer, poster_cache);
+    let app = App::new(db, omdb_indexer, poster_cache, args.poll_indexers);
     let server = Server::new(args.html_path.as_deref(), app).expect("Failed to create server");
     futures::executor::block_on(server.serve(args.port)).expect("Failed to run server");
 }

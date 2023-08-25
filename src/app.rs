@@ -202,7 +202,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(db: Db, omdb_indexer: OmdbIndexer, image_cache: ImageCache) -> App {
+    pub fn new(
+        db: Db,
+        omdb_indexer: OmdbIndexer,
+        image_cache: ImageCache,
+        poll_indexers: bool,
+    ) -> App {
         let inner = Inner {
             db: Mutex::new(db),
             omdb_indexer,
@@ -211,13 +216,15 @@ impl App {
 
         let inner = Arc::new(inner);
 
-        let poller = IndexPoller {
-            inner: Arc::clone(&inner),
-        };
+        if poll_indexers {
+            let poller = IndexPoller {
+                inner: Arc::clone(&inner),
+            };
 
-        std::thread::spawn(move || {
-            poller.run();
-        });
+            std::thread::spawn(move || {
+                poller.run();
+            });
+        }
 
         App { inner }
     }
