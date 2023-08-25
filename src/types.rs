@@ -45,7 +45,7 @@ pub struct TvShowUpdate {
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct MovieUpdate {
     pub id: MovieId,
-    pub watch_date: Option<chrono::NaiveDate>,
+    pub watched: bool,
     pub rating_id: Option<RatingId>,
 }
 

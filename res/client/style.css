@@ -33,12 +33,12 @@ body {
   margin-bottom: 8px;
 }
 
-.show-search-container {
+.search-container {
   display: flex;
   flex-direction: row;
 }
 
-.show-search-button {
+.search-button {
   flex-grow: 1;
 }
 

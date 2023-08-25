@@ -385,7 +385,11 @@ impl App {
     pub fn update_movie(&self, movie: &MovieUpdate) -> Result<Movie, UpdateMovieError> {
         let db = self.inner.db.lock().expect("Poisoned lock");
 
-        db.set_movie_watch_status(&movie.id, &movie.watch_date)?;
+        let watch_date = match movie.watched {
+            true => Some(today()),
+            false => None,
+        };
+        db.set_movie_watch_status(&movie.id, &watch_date)?;
         db.set_movie_rating(&movie.id, &movie.rating_id)?;
 
         Ok(db.get_movie(&movie.id)?)

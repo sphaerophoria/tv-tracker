@@ -91,3 +91,35 @@ export async function delete_rating(rating_id) {
   });
   const response = await fetch(request);
 }
+
+export async function get_movies() {
+  const request = new Request("movies", {
+    method: "GET",
+  });
+  const response = await fetch(request);
+  return await response.json();
+}
+
+export async function get_movie(movie_id) {
+  const request = new Request("movies/" + movie_id, {
+    method: "GET",
+  });
+  const response = await fetch(request);
+  return await response.json();
+}
+
+export async function put_movie(movie) {
+  const request = new Request("movies/" + movie.id, {
+    method: "PUT",
+    body: JSON.stringify(movie),
+  });
+  const response = await fetch(request);
+  return await response.json();
+}
+
+export async function delete_movie(movie_id) {
+  const request = new Request("movies/" + movie_id, {
+    method: "DELETE",
+  });
+  const response = await fetch(request);
+}

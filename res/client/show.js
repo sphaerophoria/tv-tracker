@@ -9,6 +9,8 @@ import {
   get_ratings,
 } from "./http.js";
 
+import { create_ratings_selector } from "./ratings_widget.js";
+
 function page_show_id() {
   const params = new URLSearchParams(document.location.search);
   return params.get("show_id");
@@ -38,7 +40,7 @@ function show_youtube_search_url(show) {
 
 async function remove_show(show_id) {
   await delete_show(show_id);
-  window.location.href = "shows.html";
+  window.location.href = "watch_list.html";
 }
 
 class ShowPage {
@@ -143,35 +145,16 @@ class ShowPage {
     let season_episodes = group_episodes_by_seasons(this.episodes);
     let today = Date.now();
 
-    const ratings_selector = document.getElementById("ratings");
-    ratings_selector.onselect = null;
-
-    const no_rating_option = document.getElementById("no-rating-option");
-    no_rating_option.rating_id = null;
-    ratings_selector.innerHTML = "";
-    ratings_selector.add(no_rating_option);
-
-    let ratings = Object.values(this.ratings).sort(
-      (a, b) => a.priority - b.priority
-    );
-    for (const rating of ratings) {
-      let option = document.createElement("option");
-      option.rating_id = rating.id;
-      option.innerText = rating.name;
-      ratings_selector.add(option);
-
-      if (rating.id == this.show.rating_id) {
-        ratings_selector.selectedIndex = ratings_selector.length - 1;
-      }
-    }
-
-    ratings_selector.onchange = (e) => {
+    const ratings_parent = document.getElementById("ratings");
+    ratings_parent.innerHTML = "";
+    create_ratings_selector(this.show, this.ratings, ratings_parent, (e) => {
+      const ratings_selector = e.originalTarget;
       let rating_id =
         ratings_selector.options[ratings_selector.selectedIndex].rating_id;
       let new_show = window.structuredClone(this.show);
       new_show.rating_id = rating_id;
       this.put_show(new_show);
-    };
+    });
 
     for (const [season, episodes] of season_episodes) {
       const season_header = document.createElement("h2");

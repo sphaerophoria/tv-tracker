@@ -9,9 +9,13 @@ export function render_card_element(show, href) {
     card.classList.add("paused");
   }
 
-  const link = document.createElement("a");
-  link.href = href;
-  card.appendChild(link);
+  let card_content = card;
+  if (href !== null) {
+    const link = document.createElement("a");
+    link.href = href;
+    card.appendChild(link);
+    card_content = link;
+  }
 
   if (show.image !== null) {
     const poster = document.createElement("img");
@@ -20,16 +24,16 @@ export function render_card_element(show, href) {
     } else {
       poster.src = "images/" + show.image;
     }
-    link.appendChild(poster);
+    card_content.appendChild(poster);
   } else {
     const poster = document.createElement("div");
     poster.classList.add("show-card-placeholder-image");
-    link.appendChild(poster);
+    card_content.appendChild(poster);
   }
 
   const progress_div = document.createElement("div");
   progress_div.classList.add("show-progress");
-  link.appendChild(progress_div);
+  card_content.appendChild(progress_div);
 
   const watched_div = document.createElement("div");
   watched_div.classList.add("num-watched");
@@ -38,6 +42,8 @@ export function render_card_element(show, href) {
   let progress = 0;
   if (show.episodes_aired !== undefined && show.episodes_aired > 0) {
     progress = show.episodes_watched / show.episodes_aired;
+  } else if (show.watched === true) {
+    progress = 1.0;
   }
 
   if (progress !== undefined) {
@@ -55,7 +61,7 @@ export function render_card_element(show, href) {
     name.innerText += " (" + show.year + ")";
   }
   name.classList.add("show-name");
-  link.appendChild(name);
+  card_content.appendChild(name);
 
   return card;
 }

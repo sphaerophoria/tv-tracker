@@ -49,6 +49,14 @@ def write_shows_to_snapshot(snapshot_writer):
     return shows
 
 
+def write_movies_to_snapshot(snapshot_writer):
+    movies = json.loads(snapshot_writer.snap("/movies"))
+    for movie in movies:
+        snapshot_writer.snap("/movies/" + str(movie["id"]))
+
+    return movies
+
+
 def write_ratings_to_snapshot(snapshot_writer):
     ratings = json.loads(snapshot_writer.snap("/ratings"))
     for rating in ratings:
@@ -59,6 +67,13 @@ def write_show_images_to_snapshot(shows, snapshot_writer):
     for show_id in shows:
         show = shows[show_id]
         image_id = show.get("image", None)
+        if image_id is not None:
+            snapshot_writer.snap("/images/" + str(image_id))
+
+
+def write_movie_images_to_snapshot(movies, snapshot_writer):
+    for movie in movies:
+        image_id = movie.get("image", None)
         if image_id is not None:
             snapshot_writer.snap("/images/" + str(image_id))
 
@@ -76,8 +91,10 @@ def main(snapshot_dir, server_url):
     snapshot_writer = SnapshotWriter(connection, snapshot_dir)
 
     shows = write_shows_to_snapshot(snapshot_writer)
+    movies = write_movies_to_snapshot(snapshot_writer)
     write_ratings_to_snapshot(snapshot_writer)
     write_show_images_to_snapshot(shows, snapshot_writer)
+    write_movie_images_to_snapshot(movies, snapshot_writer)
 
 
 if __name__ == "__main__":

@@ -45,10 +45,18 @@ struct OmdbMovie {
 pub enum ParseRemoteMovieError {
     #[error("failed to parse theater date")]
     TheaterDate(#[source] chrono::ParseError),
-    #[error("failed to home release date")]
+    #[error("failed to get home release date")]
     HomeDate(#[source] chrono::ParseError),
     #[error("failed to parse year")]
     Year(#[source] ParseIntError),
+}
+
+fn parse_date(date: &str) -> Result<Option<NaiveDate>, chrono::ParseError> {
+    if date == "N/A" {
+        return Ok(None);
+    }
+
+    Ok(Some(NaiveDate::parse_from_str(date, "%d %b %Y")?))
 }
 
 impl TryFrom<OmdbMovie> for RemoteMovie {
@@ -56,13 +64,8 @@ impl TryFrom<OmdbMovie> for RemoteMovie {
     fn try_from(value: OmdbMovie) -> Result<Self, ParseRemoteMovieError> {
         use ParseRemoteMovieError::*;
 
-        let theater_release_date = Some(
-            NaiveDate::parse_from_str(&value.theater_release_date, "%d %b %Y")
-                .map_err(TheaterDate)?,
-        );
-        let home_release_date = Some(
-            NaiveDate::parse_from_str(&value.home_release_date, "%d %b %Y").map_err(HomeDate)?,
-        );
+        let theater_release_date = parse_date(&value.theater_release_date).map_err(TheaterDate)?;
+        let home_release_date = parse_date(&value.home_release_date).map_err(HomeDate)?;
 
         Ok(RemoteMovie {
             imdb_id: value.imdb_id,
