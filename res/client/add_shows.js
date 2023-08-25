@@ -61,8 +61,8 @@ async function execute_search() {
   const search_results = document.getElementById("search-results");
   search_results.innerHTML = "";
 
-  for (const i in response_body) {
-    const item = response_body[i];
+  for (const i in response_body.shows) {
+    const item = response_body.shows[i];
     render_show(item, search_results);
   }
 }
