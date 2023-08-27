@@ -59,8 +59,6 @@ pub enum RemoveShowError {
     RemoveEpisodes(#[source] rusqlite::Error),
     #[error("failed to remove show")]
     RemoveShow(#[source] rusqlite::Error),
-    #[error("failed to remove dangling images")]
-    RemoveImages(#[source] rusqlite::Error),
     #[error("failed to verify foreign keys")]
     ForeignKeyCheck(#[source] rusqlite::Error),
     #[error("failed to commit transaction")]
@@ -388,13 +386,6 @@ impl Db {
         transaction
             .execute("DELETE FROM shows WHERE id = ?1", [show.0])
             .map_err(RemoveShowError::RemoveShow)?;
-
-        transaction
-            .execute(
-                "DELETE FROM images WHERE id NOT IN (SELECT image_id FROM shows)",
-                [],
-            )
-            .map_err(RemoveShowError::RemoveImages)?;
 
         transaction
             .execute_batch("PRAGMA foreign_key_check")
