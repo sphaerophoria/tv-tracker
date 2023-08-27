@@ -57,6 +57,8 @@ pub enum RemoveShowError {
     RemoveWatched(#[source] rusqlite::Error),
     #[error("failed to remove episodes")]
     RemoveEpisodes(#[source] rusqlite::Error),
+    #[error("failed to remove image")]
+    RemoveImage(#[source] rusqlite::Error),
     #[error("failed to remove show")]
     RemoveShow(#[source] rusqlite::Error),
     #[error("failed to verify foreign keys")]
@@ -296,6 +298,8 @@ pub enum DeleteMovieError {
     RemoveRatings(#[source] rusqlite::Error),
     #[error("failed to remove watch status")]
     RemoveWatchStatus(#[source] rusqlite::Error),
+    #[error("failed to remove image")]
+    RemoveImage(#[source] rusqlite::Error),
     #[error("failed to remove movie")]
     RemoveMovie(#[source] rusqlite::Error),
     #[error("failed to commit transaction")]
@@ -382,6 +386,13 @@ impl Db {
         transaction
             .execute("DELETE FROM episodes WHERE show_id = ?1", [show.0])
             .map_err(RemoveShowError::RemoveEpisodes)?;
+
+        transaction
+            .execute(
+                "DELETE FROM images WHERE id = (SELECT image_id from shows where id = ?1)",
+                [show.0],
+            )
+            .map_err(RemoveShowError::RemoveImage)?;
 
         transaction
             .execute("DELETE FROM shows WHERE id = ?1", [show.0])
@@ -946,6 +957,13 @@ impl Db {
                 [id.0],
             )
             .map_err(DeleteMovieError::RemoveWatchStatus)?;
+
+        transaction
+            .execute(
+                "DELETE FROM images WHERE id = (SELECT image FROM movies WHERE id = ?1)",
+                [id.0],
+            )
+            .map_err(DeleteMovieError::RemoveImage)?;
 
         transaction
             .execute(
@@ -1861,7 +1879,8 @@ mod test {
 
     #[test]
     fn test_remove_show() {
-        let show = generate_empty_show("Test Show", 0);
+        let mut show = generate_empty_show("Test Show", 0);
+        show.image = Some("test_image".to_string());
 
         let episode = RemoteEpisode {
             name: "Test Episode".to_string(),
@@ -1873,6 +1892,12 @@ mod test {
         let mut db = Db::new_in_memory().expect("Failed to create db");
 
         let show_id = db.add_show(&show).expect("Failed to add show");
+        let inserted_show = db
+            .get_show(&show_id, &gen_date(1234))
+            .expect("failed to get show");
+        let image_id = inserted_show.image.expect("invalid image");
+        db.get_image_url(&image_id)
+            .expect("Failed to get image url");
 
         db.set_pause_status(&show_id, true)
             .expect("Failed to set pause");
@@ -1892,6 +1917,8 @@ mod test {
         assert_eq!(episodes.len(), 1);
 
         db.remove_show(&show_id).expect("Failed to remove show");
+
+        assert!(db.get_image_url(&image_id).is_err());
 
         let episodes = db
             .get_episodes_for_show(&show_id)
@@ -2154,10 +2181,13 @@ mod test {
 
         let mut db = Db::new_in_memory().expect("Failed to create db");
         let movie_id = db.add_movie(&movie).expect("Failed to add movie");
-        db.get_movie(&movie_id).expect("Failed to get movie");
+        let inserted_movie = db.get_movie(&movie_id).expect("Failed to get movie");
+        db.get_image_url(&inserted_movie.image)
+            .expect("Failed to get image url");
 
         db.delete_movie(&movie_id).expect("failed to delete movie");
         assert!(db.get_movie(&movie_id).is_err());
+        assert!(db.get_image_url(&inserted_movie.image).is_err());
         assert_eq!(db.get_movies().expect("failed to get movies").len(), 0);
     }
 }
