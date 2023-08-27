@@ -8,7 +8,7 @@ class MoviePage {
     this.ratings = ratings;
 
     const movie_title = document.getElementById("movie-title");
-    movie_title.innerText = this.movie.name;
+    movie_title.innerText = this.movie.name + " (" + this.movie.year + ")";
 
     const movie_poster = document.getElementById("poster");
     movie_poster.src = "images/" + this.movie.image;
