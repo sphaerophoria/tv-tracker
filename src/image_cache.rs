@@ -1,4 +1,3 @@
-use crate::types::ImageId;
 use thiserror::Error;
 
 use std::{io::Read, path::PathBuf};
@@ -20,12 +19,14 @@ impl ImageCache {
         ImageCache { cache_dir }
     }
 
-    pub fn get(&self, id: &ImageId, url: &str) -> Result<Vec<u8>, GetImageError> {
+    pub fn get(&self, url: &str) -> Result<Vec<u8>, GetImageError> {
         if !self.cache_dir.exists() {
             std::fs::create_dir_all(&self.cache_dir)?;
         }
 
-        let fs_path = self.cache_dir.join(id.0.to_string());
+        let filename = urlencoding::encode(url);
+        let fs_path = self.cache_dir.join(filename.as_ref());
+
         if !fs_path.exists() {
             let mut response = isahc::get(url)?;
             let body = response.body_mut();
@@ -33,6 +34,7 @@ impl ImageCache {
             body.read_to_end(&mut content)?;
             std::fs::write(&fs_path, content)?;
         }
+
         Ok(std::fs::read(fs_path)?)
     }
 }

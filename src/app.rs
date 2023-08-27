@@ -347,7 +347,7 @@ impl App {
     pub fn get_image(&self, id: &ImageId) -> Result<Vec<u8>, GetImageError> {
         let db = self.inner.db.lock().expect("Poisoned lock");
         let url = db.get_image_url(id)?;
-        Ok(self.inner.image_cache.get(id, &url)?)
+        Ok(self.inner.image_cache.get(&url)?)
     }
 
     pub fn add_movie(&self, imdb_id: &str) -> Result<Movie, AddMovieError> {
