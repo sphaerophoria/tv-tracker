@@ -20,3 +20,16 @@
   background: transparent;
   height: 32px;
 }
+
+.subtitle {
+  display: flex;
+}
+
+.subtitle * {
+  margin-top: 0px;
+  margin-bottom: 0px;
+}
+
+.subtitle-label {
+  margin-right: 5px;
+}

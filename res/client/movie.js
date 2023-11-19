@@ -48,6 +48,15 @@ class MoviePage {
       watch_button.value = "Mark watched";
     }
 
+    const youtube_link = document.getElementById("youtube-link");
+    youtube_link.href = movie_youtube_search_url(this.movie);
+
+    update_release_date(
+      this.movie.theater_release_date,
+      "theater-release-date"
+    );
+    update_release_date(this.movie.home_release_date, "home-release-date");
+
     const ratings_div = document.getElementById("ratings");
     ratings_div.innerHTML = "";
     create_ratings_selector(this.movie, this.ratings, ratings_div, (e) => {
@@ -59,6 +68,20 @@ class MoviePage {
       this.put_movie(new_movie);
     });
   }
+}
+
+function movie_youtube_search_url(show) {
+  let query = show.name.replace(" ", "+");
+  query += "+trailer";
+  return "https://www.youtube.com/results?search_query=" + query;
+}
+
+function update_release_date(date, div_id) {
+  if (date === null) {
+    date = "Unknown";
+  }
+
+  document.getElementById(div_id).innerText = date;
 }
 
 async function init() {
