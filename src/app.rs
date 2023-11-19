@@ -109,7 +109,7 @@ struct IndexPoller {
 }
 
 impl IndexPoller {
-    fn poll(&mut self) {
+    fn poll_shows(&mut self) {
         let mut ret = HashMap::new();
         let monitored_shows = self
             .inner
@@ -148,10 +148,44 @@ impl IndexPoller {
         }
     }
 
+    fn poll_movies(&mut self) {
+        let movies = self.inner.db.lock().expect("Poisoned lock").get_movies();
+
+        let movies = match movies {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Failed to get monitored movie list: {e}");
+                return;
+            }
+        };
+
+        for movie in movies {
+            let omdb_movie = self.inner.omdb_indexer.get_by_id(&movie.imdb_id);
+            let omdb_movie = match omdb_movie {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Failed to get omdb movie: {e}");
+                    continue;
+                }
+            };
+
+            if let Err(e) = self
+                .inner
+                .db
+                .lock()
+                .expect("Poisoned lock")
+                .add_movie(&omdb_movie)
+            {
+                error!("Failed to update movie: {e:?}");
+            }
+        }
+    }
+
     fn run(mut self) {
         loop {
             info!("Updating episode map");
-            self.poll();
+            self.poll_shows();
+            self.poll_movies();
 
             const DAY_IN_SECONDS: u64 = 24 * 60 * 60;
             std::thread::sleep(Duration::from_secs(DAY_IN_SECONDS));

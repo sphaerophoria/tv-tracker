@@ -885,39 +885,58 @@ impl Db {
             .transaction()
             .map_err(AddMovieError::StartTransaction)?;
 
-        if let Some(id) =
+        let id = if let Some(id) =
             find_remote_movie_in_db(&transaction, movie).map_err(AddMovieError::FindRemote)?
         {
-            return Ok(id);
-        }
+            // If the movie was already added, we were likely happy with the name/year/imdb id etc.
+            // The only thing we really want to update is the release dates, as those could change
+            // with time
+            transaction
+                .execute(
+                    "
+                    UPDATE movies
+                    SET theater_release_date = ?2, home_release_date = ?3
+                    WHERE id = ?1
+                    ",
+                    params![
+                        id.0,
+                        movie
+                            .theater_release_date
+                            .map(|date| date.num_days_from_ce()),
+                        movie.home_release_date.map(|date| date.num_days_from_ce()),
+                    ],
+                )
+                .map_err(AddMovieError::Insert)?;
+            id
+        } else {
+            let image_id = insert_image_into_images_table(&transaction, Some(&movie.image))
+                .expect("movie should always have image");
 
-        let image_id = insert_image_into_images_table(&transaction, Some(&movie.image))
-            .expect("movie should always have image");
+            transaction
+                .execute(
+                    "
+                    INSERT INTO
+                    movies(imdb_id, name, year, image, theater_release_date, home_release_date)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    ",
+                    params![
+                        movie.imdb_id,
+                        movie.name,
+                        movie.year,
+                        image_id,
+                        movie
+                            .theater_release_date
+                            .map(|date| date.num_days_from_ce()),
+                        movie.home_release_date.map(|date| date.num_days_from_ce()),
+                    ],
+                )
+                .map_err(AddMovieError::Insert)?;
+            MovieId(transaction.last_insert_rowid())
+        };
 
-        transaction
-            .execute(
-                "
-                INSERT INTO
-                movies(imdb_id, name, year, image, theater_release_date, home_release_date)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                ",
-                params![
-                    movie.imdb_id,
-                    movie.name,
-                    movie.year,
-                    image_id,
-                    movie
-                        .theater_release_date
-                        .map(|date| date.num_days_from_ce()),
-                    movie.home_release_date.map(|date| date.num_days_from_ce()),
-                ],
-            )
-            .map_err(AddMovieError::Insert)?;
-
-        let id = transaction.last_insert_rowid();
         transaction.commit().map_err(AddMovieError::Commit)?;
 
-        Ok(MovieId(id))
+        Ok(id)
     }
 
     pub fn get_movies(&self) -> Result<Vec<Movie>, GetMovieError> {
