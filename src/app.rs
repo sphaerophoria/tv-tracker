@@ -315,8 +315,16 @@ impl App {
     }
 
     pub fn search(&self, query: &str) -> Result<SearchResults, SearchError> {
-        let shows = tv_maze::search(query)?;
-        let movies = self.inner.omdb_indexer.search(query)?;
+        let shows = tv_maze::search(query).unwrap_or_else(|e| {
+            error!("Failed to execute tv search: {e}");
+            Default::default()
+        });
+
+        let movies = self.inner.omdb_indexer.search(query).unwrap_or_else(|e| {
+            error!("Failed to execute movie search: {e}");
+            Default::default()
+        });
+
         Ok(SearchResults { movies, shows })
     }
 
