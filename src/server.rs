@@ -322,6 +322,6 @@ impl Server {
     }
 
     pub async fn serve(self, port: i16) -> std::io::Result<()> {
-        self.app.listen(format!("127.0.0.1:{port}")).await
+        self.app.listen(format!("0.0.0.0:{port}")).await
     }
 }
