@@ -40,7 +40,7 @@ async function render_by_group(groups, div, page_mode) {
 function group_by_rating(shows_obj, ratings_obj) {
   let shows = Object.values(shows_obj);
   let ratings = Object.values(ratings_obj).sort(
-    (a, b) => a.priority - b.priority
+    (a, b) => a.priority - b.priority,
   );
   let groups = [];
 
@@ -172,7 +172,7 @@ class WatchItemPage {
     if (sort_style == 0) {
       grouped_shows = group_items_by_watch_status(
         this.watch_items,
-        this.page_mode
+        this.page_mode,
       );
     } else if (sort_style == 1) {
       grouped_shows = group_by_rating(this.watch_items, this.ratings);

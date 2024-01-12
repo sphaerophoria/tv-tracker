@@ -53,7 +53,7 @@ class MoviePage {
 
     update_release_date(
       this.movie.theater_release_date,
-      "theater-release-date"
+      "theater-release-date",
     );
     update_release_date(this.movie.home_release_date, "home-release-date");
 

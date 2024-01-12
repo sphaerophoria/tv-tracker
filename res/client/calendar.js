@@ -37,7 +37,7 @@ async function init() {
   let shows_promise = get_shows();
   let episodes_promise = get_episodes(
     date_to_string(month_start),
-    date_to_string(month_end)
+    date_to_string(month_end),
   );
 
   let shows, episodes;

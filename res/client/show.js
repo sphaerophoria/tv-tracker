@@ -189,7 +189,7 @@ class ShowPage {
           link_text.appendData("TBD");
         }
         link_text.appendData(
-          " Episode " + episode.episode + ": " + episode.name
+          " Episode " + episode.episode + ": " + episode.name,
         );
       }
     }

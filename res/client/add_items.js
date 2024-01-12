@@ -80,7 +80,7 @@ async function execute_search() {
   for (const i in response_body.shows) {
     const item = response_body.shows[i];
     render_watch_item(item, show_search_results, () =>
-      handle_add_show(item.id)
+      handle_add_show(item.id),
     );
   }
 
@@ -89,7 +89,7 @@ async function execute_search() {
   for (const i in response_body.movies) {
     const item = response_body.movies[i];
     render_watch_item(item, movie_search_results, () =>
-      handle_add_movie(item.imdb_id)
+      handle_add_movie(item.imdb_id),
     );
   }
 }
