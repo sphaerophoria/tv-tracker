@@ -9,7 +9,10 @@ use std::{fs::File, path::Path};
 use crate::{
     app::App,
     tv_maze::TvMazeShowId,
-    types::{EpisodeId, ImageId, MovieId, MovieUpdate, Rating, RatingId, ShowId, TvShowUpdate},
+    types::{
+        EpisodeId, ImageId, MovieId, MovieUpdate, Rating, RatingId, ShowId, TvShowUpdate,
+        WatchStatus,
+    },
 };
 
 #[derive(Error, Debug)]
@@ -131,7 +134,7 @@ async fn get_episode(req: tide::Request<App>) -> tide::Result<serde_json::Value>
 #[derive(Debug, Deserialize)]
 struct PutEpisodeRequest {
     id: EpisodeId,
-    watch_date: Option<NaiveDate>,
+    watch_status: WatchStatus,
 }
 
 async fn put_episode(mut req: tide::Request<App>) -> tide::Result<serde_json::Value> {
@@ -144,7 +147,7 @@ async fn put_episode(mut req: tide::Request<App>) -> tide::Result<serde_json::Va
     }
 
     let app = req.state();
-    let response = app.set_watch_status(&id, &params.watch_date)?;
+    let response = app.set_watch_status(&id, &params.watch_status)?;
     Ok(serde_json::to_value(response)?)
 }
 

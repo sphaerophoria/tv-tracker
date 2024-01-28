@@ -50,6 +50,18 @@ export function render_card_element(show, href) {
     watched_div.style.width = "" + progress * 100 + "%";
   }
 
+  const skipped_div = document.createElement("div");
+  skipped_div.classList.add("num-skipped");
+  progress_div.appendChild(skipped_div);
+
+  let skipped_progress = 0;
+  if (show.episodes_skipped !== undefined && show.episodes_aired > 0) {
+    skipped_progress = show.episodes_skipped / show.episodes_aired;
+  }
+  if (skipped_progress !== undefined) {
+    skipped_div.style.width = "" + skipped_progress * 100 + "%";
+  }
+
   const unwatched_div = document.createElement("div");
   unwatched_div.classList.add("num-unwatched");
   unwatched_div.style.width = "auto";

@@ -58,6 +58,10 @@ body {
   background: green;
 }
 
+.num-skipped {
+  background: orange;
+}
+
 .num-unwatched {
   background: red;
   flex-grow: 1;

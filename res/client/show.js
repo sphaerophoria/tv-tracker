@@ -67,7 +67,9 @@ class ShowPage {
       const episode = this.episodes[episode_id];
       if (now > Date.parse(episode.airdate)) {
         let new_episode = window.structuredClone(episode);
-        new_episode.watch_date = date_string;
+        new_episode.watch_status = {
+          Watched: date_string,
+        };
         promises.push(this.put_episode(new_episode));
       }
     }
@@ -80,7 +82,7 @@ class ShowPage {
     let promises = [];
     for (const episode_id in this.episodes) {
       let new_episode = window.structuredClone(this.episodes[episode_id]);
-      new_episode.watch_date = null;
+      new_episode.watch_status = "Unwatched";
       promises.push(this.put_episode(new_episode));
     }
 
@@ -88,16 +90,28 @@ class ShowPage {
     this.render_show();
   }
 
-  async set_show_watch_status(episode_id) {
+  async set_episode_unwatched(episode_id) {
+    let episode = window.structuredClone(this.episodes[episode_id]);
+    episode.watch_status = "Unwatched";
+    await this.put_episode(episode);
+    this.render_show();
+  }
+
+  async set_episode_skipped(episode_id) {
+    let episode = window.structuredClone(this.episodes[episode_id]);
+    episode.watch_status = "Skipped";
+    await this.put_episode(episode);
+    this.render_show();
+  }
+
+  async set_episode_watched(episode_id) {
     let episode = window.structuredClone(this.episodes[episode_id]);
 
-    if (episode.watch_date != null) {
-      episode.watch_date = null;
-    } else {
-      const now = new Date(Date.now());
-      let date_string = now.toISOString().substring(0, 10);
-      episode.watch_date = date_string;
-    }
+    const now = new Date(Date.now());
+    let date_string = now.toISOString().substring(0, 10);
+    episode.watch_status = {
+      Watched: date_string,
+    };
 
     await this.put_episode(episode);
     this.render_show();
@@ -166,20 +180,49 @@ class ShowPage {
           aired_class = "aired";
         }
 
-        let watched_class = "unwatched";
-        const episode_watched = episode.watch_date != null;
-        if (episode_watched) {
+        const episode_holder = document.createElement("div");
+        episode_holder.classList.add("episode_holder");
+
+        const unwatched_button = document.createElement("input");
+        unwatched_button.type = "image";
+        unwatched_button.src = "img/unwatched.png";
+        unwatched_button.classList.add("watched_button");
+        episode_holder.appendChild(unwatched_button);
+        unwatched_button.onclick = () => this.set_episode_unwatched(episode.id);
+
+        const skipped_button = document.createElement("input");
+        skipped_button.type = "image";
+        skipped_button.src = "img/skip_episode.png";
+        skipped_button.classList.add("watched_button");
+        skipped_button.onclick = () => this.set_episode_skipped(episode.id);
+        episode_holder.appendChild(skipped_button);
+
+        const watched_button = document.createElement("input");
+        watched_button.type = "image";
+        watched_button.src = "img/watched.png";
+        watched_button.classList.add("watched_button");
+        watched_button.onclick = () => this.set_episode_watched(episode.id);
+        episode_holder.appendChild(watched_button);
+
+        let watched_class = "unknown";
+        if (episode.watch_status.Watched != null) {
+          watched_button.classList.add("active");
           watched_class = "watched";
+        } else if (episode.watch_status == "Skipped") {
+          skipped_button.classList.add("active");
+          watched_class = "skipped";
+        } else {
+          unwatched_button.classList.add("active");
+          watched_class = "unwatched";
         }
 
-        const link = document.createElement("a");
-        link.href = "javascript:void(0)";
+        const link = document.createElement("div");
         link.classList.add(aired_class);
         link.classList.add(watched_class);
-        link.onclick = () => this.set_show_watch_status(episode.id);
 
-        div.appendChild(link);
-        div.appendChild(document.createElement("br"));
+        episode_holder.appendChild(link);
+        div.appendChild(episode_holder);
+
         const link_text = document.createTextNode("");
         link.appendChild(link_text);
 

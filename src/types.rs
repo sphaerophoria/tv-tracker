@@ -31,6 +31,7 @@ pub struct TvShow {
     pub tvdb_id: Option<TvdbShowId>,
     pub pause_status: bool,
     pub episodes_watched: i64,
+    pub episodes_skipped: i64,
     pub episodes_aired: i64,
     pub rating_id: Option<RatingId>,
 }
@@ -58,6 +59,13 @@ pub struct RemoteEpisode {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub enum WatchStatus {
+    Watched(chrono::NaiveDate),
+    Skipped,
+    Unwatched,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct TvEpisode {
     pub id: EpisodeId,
     pub show_id: ShowId,
@@ -65,7 +73,7 @@ pub struct TvEpisode {
     pub season: i64,
     pub episode: i64,
     pub airdate: Option<chrono::NaiveDate>,
-    pub watch_date: Option<chrono::NaiveDate>,
+    pub watch_status: WatchStatus,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -1,5 +1,9 @@
-.watched {
+.aired.watched {
   color: green
+}
+
+.aired.skipped {
+  color: orange
 }
 
 .aired.unwatched {
@@ -30,4 +34,19 @@
 #youtube-img {
   background: transparent;
   height: 32px;
+}
+
+.watched_button {
+  background: transparent;
+  filter: invert(80%);
+  height: 20px;
+  padding: 0px;
+}
+
+.watched_button.active {
+  filter: invert(0%);
+}
+
+.episode_holder {
+  display: flex;
 }

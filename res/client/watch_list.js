@@ -67,7 +67,7 @@ function group_shows_by_watch_status(shows) {
   let paused_shows = [];
 
   for (const show of Object.values(shows)) {
-    if (show.episodes_watched == show.episodes_aired) {
+    if (show.episodes_watched + show.episodes_skipped == show.episodes_aired) {
       finished_shows.push(show);
     } else if (show.pause_status) {
       paused_shows.push(show);

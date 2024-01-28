@@ -16,7 +16,7 @@ use crate::{
     tv_maze::{self, TvMazeApiError, TvMazeShowId},
     types::{
         EpisodeId, ImageId, Movie, MovieId, MovieUpdate, Rating, RatingId, RemoteMovie,
-        RemoteTvShow, ShowId, TvEpisode, TvShow, TvShowUpdate,
+        RemoteTvShow, ShowId, TvEpisode, TvShow, TvShowUpdate, WatchStatus,
     },
 };
 
@@ -331,7 +331,7 @@ impl App {
     pub fn set_watch_status(
         &self,
         episode: &EpisodeId,
-        status: &Option<NaiveDate>,
+        status: &WatchStatus,
     ) -> Result<TvEpisode, SetWatchStatusError> {
         let mut db = self.inner.db.lock().expect("Poisoned lock");
         db.set_episode_watch_status(episode, status)?;
