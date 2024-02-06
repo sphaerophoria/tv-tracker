@@ -925,6 +925,25 @@ impl Db {
         Ok(())
     }
 
+    pub fn get_images(&self) -> Vec<(ImageId, String)> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT images.id, images.url FROM shows LEFT JOIN images ON shows.image_id = images.id")
+            .unwrap();
+
+        let mut rows = statement.query([]).unwrap();
+
+        let mut output = Vec::new();
+        while let Some(row) = rows.next().unwrap() {
+            let image_id = ImageId(row.get(0).unwrap());
+            let url = row.get(1).unwrap();
+
+            output.push((image_id, url));
+        }
+
+        output
+    }
+
     pub fn get_image_url(&self, image_id: &ImageId) -> Result<String, GetImageUrlError> {
         let mut statement = self
             .connection

@@ -392,6 +392,73 @@ impl App {
         Ok(self.inner.image_cache.get(&url)?)
     }
 
+    pub fn get_merged_image(&self) -> (Vec<u8>, HashMap<ImageId, usize>) {
+        let metadata_path = std::path::Path::new("merged.json");
+        let image_path = std::path::Path::new("merged.png");
+        if image_path.exists() && metadata_path.exists() {
+            let image =  std::fs::read("merged.png").unwrap();
+            let f = std::io::BufReader::new(std::fs::File::open(metadata_path).unwrap());
+            let metadata = serde_json::from_reader(f).unwrap();
+            return (image, metadata)
+        }
+
+        let db = self.inner.db.lock().expect("Poisoned lock");
+        let images = db.get_images();
+        let mut max_height = 0;
+        let mut current_width = 0;
+        // FIXME: Should we store all images at once :(
+        let mut loaded_images = Vec::new();
+        for (image_id, url) in &images {
+            print!("{}: {url}\r", image_id.0);
+            let image_data = self.inner.image_cache.get(&url).unwrap();
+            let image = image::load_from_memory(&image_data).unwrap();
+            let width = image.width();
+            max_height = image.height().max(max_height);
+            loaded_images.push((image.to_rgb8(), current_width));
+            current_width += width;
+        }
+        println!();
+
+        const MAX_CANAVS_SIZE_BYTES: usize = 100_000_000;
+
+        let vec_size_bytes: usize = (3 * current_width * max_height) as usize;
+        if vec_size_bytes > MAX_CANAVS_SIZE_BYTES {
+            panic!("Too big :(");
+        }
+        let mut output = vec![0; vec_size_bytes];
+
+        for (image, x_pos) in &loaded_images {
+            let source_width = image.width();
+            let source_image_raw: &[u8] = image.as_raw();
+            let source_row_iter = source_image_raw.chunks(source_width as usize * 3);
+            for (y, row) in source_row_iter.enumerate() {
+                let dest_start = y * current_width as usize * 3 + *x_pos as usize * 3;
+                let dest_end = dest_start + source_width as usize * 3;
+
+                let dest_data = &mut output[dest_start..dest_end];
+                dest_data.copy_from_slice(row);
+            }
+        }
+
+        image::save_buffer("merged.png", &output, current_width, max_height, image::ColorType::Rgb8).unwrap();
+
+        let metadata = loaded_images.into_iter().enumerate()
+            .map(|(i, (_, offset))| {
+                (images[i].0, offset as usize)
+            })
+            .collect();
+
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(metadata_path)
+            .unwrap();
+        serde_json::to_writer(f, &metadata).unwrap();
+
+        return (std::fs::read("merged.png").unwrap(), metadata)
+    }
+
     pub fn add_movie(&self, imdb_id: &str) -> Result<Movie, AddMovieError> {
         let mut db = self.inner.db.lock().expect("Poisoned lock");
         let movie = self

@@ -100,6 +100,14 @@ export async function get_movies() {
   return await response.json();
 }
 
+export async function get_image_offests() {
+  const request = new Request("images_merged_metadata", {
+    method: "GET",
+  });
+  const response = await fetch(request);
+  return await response.json();
+}
+
 export async function get_movie(movie_id) {
   const request = new Request("movies/" + movie_id, {
     method: "GET",

@@ -1,7 +1,7 @@
 "use strict";
 
 // Used for both remote shows and full shows
-export function render_card_element(show, href) {
+export function render_card_element(show, href, image_offsets) {
   const card = document.createElement("div");
   card.classList.add("show-card");
 
@@ -22,7 +22,12 @@ export function render_card_element(show, href) {
     if (typeof show.image == "string" && show.image.startsWith("http")) {
       poster.src = show.image;
     } else {
-      poster.src = "images/" + show.image;
+      poster.src = "empty_image.svg";
+      poster.width = 210;
+      poster.height = 295;
+      const left = image_offsets[show.image];
+      poster.style.background = "url(images_merged) " + left + "px 0px";
+      console.log(poster.style.background);
     }
     card_content.appendChild(poster);
   } else {

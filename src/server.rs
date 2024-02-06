@@ -173,6 +173,20 @@ async fn get_image(req: tide::Request<App>) -> tide::Result<tide::Body> {
     Ok(body)
 }
 
+async fn get_images_merged_metadata(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let app = req.state();
+    let metadata = app.get_merged_image().1;
+    let ret = serde_json::to_value(metadata).unwrap();
+    Ok(ret)
+}
+
+async fn get_images_merged(req: tide::Request<App>) -> tide::Result<tide::Body> {
+    let app = req.state();
+    let mut body = tide::Body::from_bytes(app.get_merged_image().0);
+    body.set_mime("image/png");
+    Ok(body)
+}
+
 #[derive(Debug, Deserialize)]
 struct SetRatingsRequest {
     name: String,
@@ -310,6 +324,8 @@ impl Server {
             .delete(delete_rating);
 
         app.at("/images/:id").get(get_image);
+        app.at("/images_merged").get(get_images_merged);
+        app.at("/images_merged_metadata").get(get_images_merged_metadata);
 
         app.at("/movies").get(get_movies).put(put_movies);
 
