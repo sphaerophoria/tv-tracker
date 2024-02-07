@@ -394,9 +394,9 @@ impl App {
 
     pub fn get_merged_image(&self) -> (Vec<u8>, HashMap<ImageId, usize>) {
         let metadata_path = std::path::Path::new("merged.json");
-        let image_path = std::path::Path::new("merged.png");
+        let image_path = std::path::Path::new("merged.jpg");
         if image_path.exists() && metadata_path.exists() {
-            let image =  std::fs::read("merged.png").unwrap();
+            let image =  std::fs::read(image_path).unwrap();
             let f = std::io::BufReader::new(std::fs::File::open(metadata_path).unwrap());
             let metadata = serde_json::from_reader(f).unwrap();
             return (image, metadata)
@@ -440,7 +440,7 @@ impl App {
             }
         }
 
-        image::save_buffer("merged.png", &output, current_width, max_height, image::ColorType::Rgb8).unwrap();
+        image::save_buffer(image_path, &output, current_width, max_height, image::ColorType::Rgb8).unwrap();
 
         let metadata = loaded_images.into_iter().enumerate()
             .map(|(i, (_, offset))| {
@@ -456,7 +456,7 @@ impl App {
             .unwrap();
         serde_json::to_writer(f, &metadata).unwrap();
 
-        return (std::fs::read("merged.png").unwrap(), metadata)
+        return (std::fs::read(image_path).unwrap(), metadata)
     }
 
     pub fn add_movie(&self, imdb_id: &str) -> Result<Movie, AddMovieError> {

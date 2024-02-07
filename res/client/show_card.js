@@ -23,11 +23,11 @@ export function render_card_element(show, href, image_offsets) {
       poster.src = show.image;
     } else {
       poster.src = "empty_image.svg";
-      poster.width = 210;
-      poster.height = 295;
+      poster.style.width = "210px";
+      poster.style.height = "295px";
       const left = image_offsets[show.image];
-      poster.style.background = "url(images_merged) " + left + "px 0px";
-      console.log(poster.style.background);
+      poster.style.background = "url(images_merged) -" + left + "px 0px";
+      poster.loading = "lazy";
     }
     card_content.appendChild(poster);
   } else {
