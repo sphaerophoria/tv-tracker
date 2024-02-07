@@ -15,6 +15,7 @@ mod app;
 mod db;
 mod image_cache;
 mod omdb;
+mod poster_sprite_sheet;
 mod server;
 mod tv_maze;
 mod types;

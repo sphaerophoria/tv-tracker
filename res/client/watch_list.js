@@ -1,6 +1,11 @@
 "use strict";
 
-import { get_movies, get_shows, get_ratings, get_image_offests } from "./http.js";
+import {
+  get_movies,
+  get_shows,
+  get_ratings,
+  get_image_offests,
+} from "./http.js";
 import { render_card_element } from "./show_card.js";
 
 function sort_items_by_name(items) {
@@ -210,7 +215,12 @@ class WatchItemPage {
 
     let shows_div = document.getElementById("shows");
     shows_div.innerHTML = "";
-    render_by_group(grouped_shows, shows_div, this.page_mode, this.image_offsets);
+    render_by_group(
+      grouped_shows,
+      shows_div,
+      this.page_mode,
+      this.image_offsets,
+    );
   }
 }
 
@@ -255,9 +265,14 @@ async function init() {
   [watch_items, ratings, image_offsets] = await Promise.all([
     watch_items_promise,
     ratings_promise,
-    image_offsets_promise
+    image_offsets_promise,
   ]);
-  const show_page = new WatchItemPage(watch_items, ratings, page_mode, image_offsets);
+  const show_page = new WatchItemPage(
+    watch_items,
+    ratings,
+    page_mode,
+    image_offsets,
+  );
   show_page.render();
 
   let sort_style_selector = document.getElementById("sort-style");
