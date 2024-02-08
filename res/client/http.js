@@ -1,34 +1,34 @@
-export async function get_show_episodes(show_id) {
-  const request = new Request("shows/" + show_id + "/episodes", {
+async function get_json(url) {
+  const request = new Request(url, {
     method: "GET",
   });
   const response = await fetch(request);
   return await response.json();
+}
+
+async function put_json(url, data) {
+  const request = new Request(url,{
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+  const response = await fetch(request);
+  return await response.json();
+}
+
+export async function get_show_episodes(show_id) {
+  return await get_json("shows/" + show_id + "/episodes")
 }
 
 export async function get_shows() {
-  const request = new Request("shows", {
-    method: "GET",
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await get_json("shows")
 }
 
 export async function get_show(show_id) {
-  const request = new Request("shows/" + show_id, {
-    method: "GET",
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await get_json("shows/" + show_id)
 }
 
 export async function put_show(show) {
-  const request = new Request("shows/" + show.id, {
-    method: "PUT",
-    body: JSON.stringify(show),
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await put_json("shows/" + show.id, show)
 }
 
 export async function delete_show(show_id) {
@@ -43,46 +43,23 @@ export async function get_episodes(start_date, end_date) {
     start_date: start_date,
     end_date: end_date,
   });
-  const request = new Request("episodes?" + params.toString(), {
-    method: "GET",
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await get_json("episodes?" + params.toString())
 }
 
 export async function put_episode(episode) {
-  const request = new Request("episodes/" + episode.id, {
-    method: "PUT",
-    body: JSON.stringify(episode),
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await put_json("episodes/" + episode.id, episode)
 }
 
 export async function get_ratings() {
-  const request = new Request("ratings", {
-    method: "GET",
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await get_json("ratings")
 }
 
 export async function put_ratings(rating) {
-  const request = new Request("ratings", {
-    method: "PUT",
-    body: JSON.stringify(rating),
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await put_json("ratings", rating)
 }
 
 export async function put_rating(rating) {
-  const request = new Request("ratings/" + rating.id, {
-    method: "PUT",
-    body: JSON.stringify(rating),
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await put_json("ratings/" + rating.id, rating);
 }
 
 export async function delete_rating(rating_id) {
@@ -93,36 +70,19 @@ export async function delete_rating(rating_id) {
 }
 
 export async function get_movies() {
-  const request = new Request("movies", {
-    method: "GET",
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await get_json("movies")
 }
 
-export async function get_image_offests() {
-  const request = new Request("images_merged_metadata", {
-    method: "GET",
-  });
-  const response = await fetch(request);
-  return await response.json();
+export async function get_tv_sprite_sheet_info() {
+  return await get_json("tv_sprite_sheet_info")
 }
 
 export async function get_movie(movie_id) {
-  const request = new Request("movies/" + movie_id, {
-    method: "GET",
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await get_json("movies/" + movie_id)
 }
 
 export async function put_movie(movie) {
-  const request = new Request("movies/" + movie.id, {
-    method: "PUT",
-    body: JSON.stringify(movie),
-  });
-  const response = await fetch(request);
-  return await response.json();
+  return await put_json("movies/" + movie.id, movie);
 }
 
 export async function delete_movie(movie_id) {

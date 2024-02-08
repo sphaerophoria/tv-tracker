@@ -4,7 +4,7 @@ import {
   get_movies,
   get_shows,
   get_ratings,
-  get_image_offests,
+  get_tv_sprite_sheet_info,
 } from "./http.js";
 import { render_card_element } from "./show_card.js";
 
@@ -14,18 +14,18 @@ function sort_items_by_name(items) {
   });
 }
 
-function render_items(items, parent, image_offsets) {
+function render_items(items, parent, sprite_sheet_info) {
   sort_items_by_name(items);
 
   let ret = "";
   for (const item of items) {
-    const card = render_card_element(item.item, item.href, image_offsets);
+    const card = render_card_element(item.item, item.href, sprite_sheet_info);
     parent.appendChild(card);
   }
   return ret;
 }
 
-async function render_by_group(groups, div, page_mode, image_offsets) {
+async function render_by_group(groups, div, page_mode, sprite_sheet_info) {
   for (const group of groups) {
     if (group.items.length == 0) {
       continue;
@@ -37,7 +37,7 @@ async function render_by_group(groups, div, page_mode, image_offsets) {
 
     const links = document.createElement("div");
     links.classList.add("show-list");
-    render_items(group.items, links, image_offsets);
+    render_items(group.items, links, sprite_sheet_info);
     div.appendChild(links);
   }
 }
@@ -163,11 +163,11 @@ function group_items_by_watch_status(watch_items, page_mode) {
 }
 
 class WatchItemPage {
-  constructor(watch_items, ratings, page_mode, image_offsets) {
+  constructor(watch_items, ratings, page_mode, sprite_sheet_info) {
     this.watch_items = watch_items;
     this.ratings = ratings;
     this.page_mode = page_mode;
-    this.image_offsets = image_offsets;
+    this.sprite_sheet_info = sprite_sheet_info;
   }
 
   render() {
@@ -219,7 +219,7 @@ class WatchItemPage {
       grouped_shows,
       shows_div,
       this.page_mode,
-      this.image_offsets,
+      this.sprite_sheet_info,
     );
   }
 }
@@ -259,19 +259,20 @@ async function init() {
   }
 
   const ratings_promise = get_ratings();
-  const image_offsets_promise = get_image_offests();
+  const sprite_sheet_info_promise = get_tv_sprite_sheet_info();
 
-  let watch_items, ratings, image_offsets;
-  [watch_items, ratings, image_offsets] = await Promise.all([
+  let watch_items, ratings, sprite_sheet_info;
+  [watch_items, ratings, sprite_sheet_info] = await Promise.all([
     watch_items_promise,
     ratings_promise,
-    image_offsets_promise,
+    sprite_sheet_info_promise,
   ]);
+
   const show_page = new WatchItemPage(
     watch_items,
     ratings,
     page_mode,
-    image_offsets,
+    sprite_sheet_info,
   );
   show_page.render();
 
