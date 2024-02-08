@@ -1,7 +1,8 @@
 #![allow(unused)]
 use image::{imageops::FilterType, ColorType, RgbImage};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{path::{Path, PathBuf}, task::Wake};
+use thiserror::Error;
 
 use crate::types::ImageId;
 
@@ -17,22 +18,14 @@ fn slot_for_id(ids: &[ItemMetadata], id: ImageId) -> usize {
     }
 }
 
-fn slot_to_x_offs(slot: usize, item_width: u32) -> u32 {
+fn slot_to_x_offset_px(slot: usize, item_width: u32) -> u32 {
     let slot_u32: u32 = slot.try_into().unwrap();
     slot_u32 * item_width
 }
 
-fn get_metadata_path(path: &Path) -> PathBuf {
-    path.join("metadata.json")
-}
-
-fn get_image_path(path: &Path) -> PathBuf {
-    path.join("image.jpg")
-}
-
 const PIXEL_SIZE: usize = 3;
 
-fn create_image(image_path: &Path, item_width: u32, item_height: u32, capacity: usize) {
+fn create_sprite_sheet_image(image_path: &Path, item_width: u32, item_height: u32, capacity: usize) {
     let width = item_width as usize * capacity;
     let height = item_height as usize;
     let data = vec![0; width * height * PIXEL_SIZE];
@@ -47,27 +40,109 @@ fn create_image(image_path: &Path, item_width: u32, item_height: u32, capacity: 
     .unwrap();
 }
 
-fn open_image(data_path: &Path, item_width: u32, item_height: u32, capacity: usize) -> RgbImage {
-    let image_path = get_image_path(&data_path);
+fn open_sprite_sheet_image(image_path: &Path, item_width: u32, item_height: u32, capacity: usize) -> RgbImage {
     if !image_path.exists() {
-        create_image(&image_path, item_width, item_height, capacity);
+        create_sprite_sheet_image(&image_path, item_width, item_height, capacity);
     }
 
     let sprite_sheet = image::open(image_path).unwrap();
     sprite_sheet.to_rgb8()
 }
 
+fn load_image_for_sprite_sheet_insertion(image_path: &Path, item_width: u32, item_height: u32) -> RgbImage {
+    let img_data = image::open(image_path).unwrap();
+    img_data
+        .resize(
+            item_width,
+            item_height,
+            FilterType::Lanczos3,
+        )
+        .to_rgb8()
+}
 
-#[derive(Serialize, Deserialize)]
+
+struct RgbSpriteSheet {
+    sheet_image_path: PathBuf,
+    sheet_width_bytes: usize,
+    item_width_bytes: usize,
+    buf: Vec<u8>,
+}
+
+impl RgbSpriteSheet {
+    fn new(sheet_image_path: PathBuf, item_width_px: u32, item_height_px: u32, capacity: usize) -> RgbSpriteSheet {
+        let img = open_sprite_sheet_image(&sheet_image_path, item_width_px, item_height_px, capacity);
+        let sheet_width_bytes = img.width() as usize * PIXEL_SIZE;
+        let item_width_bytes = item_width_px  as usize * PIXEL_SIZE;
+
+        RgbSpriteSheet {
+            sheet_image_path,
+            sheet_width_bytes,
+            item_width_bytes,
+            buf: img.into_raw()
+        }
+    }
+
+    fn slot_to_x_offset_bytes(&self, slot: usize) -> usize {
+        slot * self.item_width_bytes
+    }
+
+    /// returns inserted x offset in px
+    fn copy_image( &mut self, image: &RgbImage, slot_idx: usize) -> usize {
+        let x_start_bytes = self.slot_to_x_offset_bytes(slot_idx);
+        let x_end_bytes = x_start_bytes + self.item_width_bytes;
+
+        let dest_lines = self.buf
+            .chunks_mut(self.sheet_width_bytes)
+            .map(|line| &mut line[x_start_bytes..x_end_bytes]);
+
+        let source_lines = image
+            .as_raw()
+            .chunks(self.item_width_bytes);
+
+        for (dest_line, source_line) in dest_lines.zip(source_lines) {
+            dest_line.copy_from_slice(source_line);
+        }
+
+        x_start_bytes / PIXEL_SIZE
+    }
+
+    fn save(&self) {
+        image::save_buffer(
+            &self.sheet_image_path,
+            &self.buf,
+            self.sheet_width_bytes as u32 / PIXEL_SIZE as u32,
+            self.buf.len() as u32 / self.sheet_width_bytes as u32,
+            ColorType::Rgb8,
+        )
+        .unwrap();
+    }
+}
+
+struct SpriteSheetFolder {
+    path: PathBuf,
+}
+
+impl SpriteSheetFolder {
+    fn metadata_path(&self) -> PathBuf {
+        self.path.join("metadata.json")
+    }
+
+    fn image_path(&self) -> PathBuf {
+        self.path.join("image.jpg")
+    }
+}
+
+
+#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ItemMetadata {
     pub id: ImageId,
+    pub url: String,
     pub x_offset: u32,
-    pub y_offset: u32,
     pub width: u32,
     pub height: u32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Metadata {
     pub images: Vec<ItemMetadata>,
     pub capacity: usize,
@@ -84,6 +159,22 @@ impl Metadata {
         Some(metadata)
     }
 
+    fn find_id(&self, id: ImageId) -> Option<&ItemMetadata> {
+        self.images.iter().find(|item| {
+            item.id == id
+        })
+    }
+
+    fn update(&mut self, to_insert: ItemMetadata) {
+        if let Some(idx) = self.images.iter().position(|item| {
+            item.id == to_insert.id
+        }) {
+            self.images[idx] = to_insert;
+        } else {
+            self.images.push(to_insert);
+        }
+    }
+
     fn save(&self, path: &Path) {
         let f = std::fs::OpenOptions::new()
             .create(true)
@@ -96,8 +187,18 @@ impl Metadata {
     }
 }
 
+#[derive(Debug, Error)]
+enum InsertImageErrorKind {
+    #[error("sprite sheet full")]
+    Full
+}
+
+#[derive(Debug, Error)]
+#[error(transparent)]
+pub struct InsertImageError(#[from] InsertImageErrorKind);
+
 pub struct ImageSpriteSheet {
-    path: PathBuf,
+    folder: SpriteSheetFolder,
     metadata: Metadata,
 }
 
@@ -112,7 +213,9 @@ impl ImageSpriteSheet {
             std::fs::create_dir_all(&path).unwrap();
         }
 
-        let metadata = Metadata::load(&get_metadata_path(&path)).and_then(|metadata| {
+        let folder = SpriteSheetFolder { path };
+
+        let metadata = Metadata::load(&folder.metadata_path()).and_then(|metadata| {
             if metadata.capacity == capacity
                 && metadata.item_width == item_width
                 && metadata.item_height == item_height
@@ -133,69 +236,52 @@ impl ImageSpriteSheet {
             },
         };
 
-        ImageSpriteSheet { metadata, path }
+        ImageSpriteSheet { metadata, folder }
     }
 
-    pub fn push_image(&mut self, id: ImageId, image_path: &Path) {
+    pub fn push_image(&mut self, id: ImageId, url: &str, image_path: &Path) -> Result<(), InsertImageError> {
         // FIXME: return early if url matches
         // FIXME: return error if capacity is already full
         // FIXME: Store width and height of inserted item (may not be perfectly the slot size)
         // FIXME: replace image if exists
         let slot = slot_for_id(&self.metadata.images, id);
-        let x_offs = slot_to_x_offs(slot, self.metadata.item_width) as usize;
 
-        let img_data = image::open(image_path).unwrap();
-        let img_data = img_data
-            .resize(
-                self.metadata.item_width,
-                self.metadata.item_height,
-                FilterType::Lanczos3,
-            )
-            .to_rgb8();
+        if let Some(existing_metadata) = self.metadata.find_id(id) {
+            if existing_metadata.url == url {
+                return Ok(());
+            }
+        }
 
-        let sprite_sheet = open_image(
-            &self.path,
+        if self.remaining_capacity() == 0 {
+            return Err(InsertImageErrorKind::Full.into());
+        }
+
+        let img_data = load_image_for_sprite_sheet_insertion(image_path, self.metadata.item_width, self.metadata.item_height);
+
+        let mut sprite_sheet_image = RgbSpriteSheet::new(
+            self.folder.image_path(),
             self.metadata.item_width,
             self.metadata.item_height,
             self.metadata.capacity,
         );
-        let mut sprite_sheet_data = sprite_sheet.into_raw();
+        let x_offs_px = sprite_sheet_image.copy_image(&img_data, slot);
+        sprite_sheet_image.save();
 
-
-        let dest_lines = sprite_sheet_data
-            .chunks_mut(self.metadata.item_width as usize * self.metadata.capacity * PIXEL_SIZE)
-            .map(|line| &mut line[x_offs * PIXEL_SIZE ..x_offs * PIXEL_SIZE  + self.metadata.item_width as usize * PIXEL_SIZE]);
-
-        let source_lines = img_data
-            .as_raw()
-            .chunks(self.metadata.item_width as usize * PIXEL_SIZE);
-
-        for (dest_line, source_line) in dest_lines.zip(source_lines) {
-            dest_line.copy_from_slice(source_line);
-        }
-
-        image::save_buffer(
-            &get_image_path(&self.path),
-            &sprite_sheet_data,
-            self.metadata.item_width * self.metadata.capacity as u32,
-            self.metadata.item_height,
-            ColorType::Rgb8,
-        )
-        .unwrap();
-
-        self.metadata.images.push(ItemMetadata {
+        self.metadata.update(ItemMetadata {
             id,
+            url: url.to_string(),
             width: img_data.width(),
             height: img_data.height(),
-            x_offset: x_offs as u32,
-            y_offset: 0,
+            x_offset: x_offs_px as u32,
         });
 
-        self.metadata.save(&get_metadata_path(&self.path));
+        self.metadata.save(&self.folder.metadata_path());
+
+        Ok(())
     }
 
     pub fn data(&self) -> Vec<u8> {
-        std::fs::read(get_image_path(&self.path)).unwrap()
+        std::fs::read(&self.folder.image_path()).unwrap()
     }
 
     pub fn remaining_capacity(&self) -> usize {
@@ -273,7 +359,7 @@ mod test {
         let mut output = Vec::new();
         let data = sheet.data();
         let data = image::load_from_memory(&data).unwrap().to_rgb8().into_raw();
-        for y in item_metadata.y_offset..item_metadata.y_offset + item_metadata.height {
+        for y in 0..item_metadata.height {
             for x in item_metadata.x_offset * PIXEL_SIZE as u32..item_metadata.x_offset * PIXEL_SIZE  as u32+ item_metadata.width * (PIXEL_SIZE as u32) {
                 output.push(data[(y * sheet_width_bytes as u32 + x) as usize])
             }
@@ -295,7 +381,7 @@ mod test {
         let img_path = fixture.tmp.path().join("img.png");
         img.save(&img_path);
 
-        fixture.sheet.push_image(ImageId(0), &img_path);
+        fixture.sheet.push_image(ImageId(0), "test", &img_path).expect("failed to push image");
         let loaded = load_image_from_sprite_sheet(&fixture.sheet, ImageId(0));
         // Not a perfect match as we save jpgs which are lossy
         let distance = calc_slice_distance(&loaded, img.as_raw());
@@ -304,19 +390,19 @@ mod test {
 
     #[test]
     fn test_image_update() {
-        // Push image with same id, but different URL
+        // Push image with same id, but different URL, we should see that the image is the second
+        // thing we inserted, not the first
         let mut fixture = Fixture::new();
 
-        // Push an image, check that the inserted thing is == to what we inserted
         let img = generate_image([0, 0, 0], [255, 255, 255]);
         let img_path = fixture.tmp.path().join("img.png");
         img.save(&img_path);
 
-        fixture.sheet.push_image(ImageId(0), &img_path);
+        fixture.sheet.push_image(ImageId(0), "test", &img_path).expect("failed to push image");
 
         let img = generate_image([255, 255, 255], [0, 0, 0]);
         img.save(&img_path);
-        fixture.sheet.push_image(ImageId(0), &img_path);
+        fixture.sheet.push_image(ImageId(0), "test2", &img_path).expect("failed to push image");
 
         assert_eq!(fixture.sheet.metadata().images.len(), 1);
 
@@ -328,21 +414,84 @@ mod test {
 
     #[test]
     fn test_existing_image() {
-        // Push image with same id and same url
+        // Push image with same id, but same URL, we should see that the second image was not
+        // inserted as it was already there
+        let mut fixture = Fixture::new();
+
+        let img1 = generate_image([0, 0, 0], [255, 255, 255]);
+        let img_path = fixture.tmp.path().join("img.png");
+        img1.save(&img_path);
+
+        fixture.sheet.push_image(ImageId(0), "test", &img_path).expect("failed to push image");
+
+        let img2 = generate_image([255, 255, 255], [0, 0, 0]);
+        img2.save(&img_path);
+        fixture.sheet.push_image(ImageId(0), "test", &img_path).expect("failed to push image");
+
+        assert_eq!(fixture.sheet.metadata().images.len(), 1);
+
+        let loaded = load_image_from_sprite_sheet(&fixture.sheet, ImageId(0));
+        // Not a perfect match as we save jpgs which are lossy
+        let distance = calc_slice_distance(&loaded, img1.as_raw());
+        assert!(distance < 500);
     }
 
     #[test]
     fn test_push_full() {
-        // Try to push image when capacity is already met
+        // Fill up the sprite sheet, try to push one too many. Should complain that no more items
+        // will fit
+        let mut fixture = Fixture::new();
+
+        let img = generate_image([0, 0, 0], [255, 255, 255]);
+        let img_path = fixture.tmp.path().join("img.png");
+        img.save(&img_path);
+
+        for i in 0..DEFAULT_ITEM_CAPACITY {
+            fixture.sheet.push_image(ImageId(i as i64), "test", &img_path).expect("failed to push image");
+        }
+
+        let res = fixture.sheet.push_image(ImageId(DEFAULT_ITEM_CAPACITY as i64), "test", &img_path);
+        assert!(matches!(res, Err(InsertImageError(InsertImageErrorKind::Full))));
     }
 
     #[test]
     fn test_remaining_capacity() {
         // Ensure capacity is correctly flagged
+        let mut fixture = Fixture::new();
+
+        let img = generate_image([0, 0, 0], [255, 255, 255]);
+        let img_path = fixture.tmp.path().join("img.png");
+        img.save(&img_path);
+
+        for i in 0..DEFAULT_ITEM_CAPACITY {
+            fixture.sheet.push_image(ImageId(i as i64), "test", &img_path).expect("failed to push image");
+            assert_eq!(fixture.sheet.remaining_capacity(), DEFAULT_ITEM_CAPACITY - i - 1);
+        }
+
     }
 
     #[test]
     fn test_load() {
-        // Test that re-loading the same sprite sheet results in cached data still being there
+        // Ensure capacity is correctly flagged
+        // Insert different images, check the metadata, ensure that loading the data again matches
+        let mut fixture = Fixture::new();
+
+        for i in 0..DEFAULT_ITEM_CAPACITY {
+            let min = (i * 255 / DEFAULT_ITEM_CAPACITY) as u8;
+            let max = min + 255 / DEFAULT_ITEM_CAPACITY as u8;
+            let img = generate_image([min, min, min], [max, max, max]);
+            let img_path = fixture.tmp.path().join("img.png");
+            img.save(&img_path);
+
+            fixture.sheet.push_image(ImageId(i as i64), "test", &img_path).expect("failed to push image");
+        }
+
+        let reloaded = ImageSpriteSheet::new(
+            fixture.tmp.path().join("sheet"),
+            DEFAULT_ITEM_CAPACITY,
+            DEFAULT_ITEM_WIDTH,
+            DEFAULT_ITEM_HEIGHT);
+        assert_eq!(reloaded.metadata(), fixture.sheet.metadata());
+        assert_eq!(reloaded.data(), fixture.sheet.data());
     }
 }

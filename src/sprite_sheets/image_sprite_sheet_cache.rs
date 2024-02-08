@@ -85,7 +85,7 @@ impl ImageSpriteSheetCache {
 
         let sheet_idx = get_sheet_with_capacity(&self.data_path, &mut self.sheets);
         let sheet = &mut self.sheets[sheet_idx];
-        sheet.push_image(id, image_path);
+        sheet.push_image(id, url, image_path);
         sheet
     }
 }
