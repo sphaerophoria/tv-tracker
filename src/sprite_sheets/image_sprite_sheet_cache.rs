@@ -103,6 +103,7 @@ impl ImageSpriteSheetCache {
         for (i, sheet) in self.sheets.iter().enumerate() {
             let mut sheet_output = SpriteSheetMetadata {
                 id: SpriteSheetId(i as i64),
+                width: sheet.sheet_width_px(),
                 items: Vec::new(),
             };
             let sheet_metadata = sheet.metadata();

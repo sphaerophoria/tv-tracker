@@ -310,7 +310,7 @@ impl ImageSpriteSheet {
         &self.metadata
     }
 
-    fn sheet_width_px(&self) -> usize {
+    pub fn sheet_width_px(&self) -> usize {
         self.metadata.item_width as usize * self.metadata.capacity
     }
 }

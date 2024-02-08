@@ -11,6 +11,22 @@ function find_sprite_sheet(sprite_sheet_info, image_id) {
   return null;
 }
 
+function get_show_card_width_from_css() {
+    let show_card_width = getComputedStyle(document.body).getPropertyValue("--show-card-width");
+    return Number(show_card_width.substring(0, show_card_width.search("px")))
+}
+
+function set_image_properties_for_sprite_sheet(img, sheet, item) {
+  img.src = "empty_image.svg";
+  const show_card_width = get_show_card_width_from_css();
+  const scaling_factor = show_card_width / item.width;
+
+  img.style.height = (scaling_factor * item.height) + "px";
+  img.style.background = "url(tv_sprite_sheet/" + sheet.id + ")";
+  img.style.backgroundPosition = "-" + (item.x_offset * scaling_factor) + "px 0px";
+  img.style.backgroundSize = sheet.width * scaling_factor + "px " + "auto";
+}
+
 // Used for both remote shows and full shows
 export function render_card_element(show, href, sprite_sheet_info) {
   const card = document.createElement("div");
@@ -37,14 +53,7 @@ export function render_card_element(show, href, sprite_sheet_info) {
       if (sheet_for_image === null) {
         poster.src = "images/" + show.image
       } else {
-        let sheet, item;
-        [sheet, item] = sheet_for_image;
-        poster.src = "empty_image.svg";
-        poster.style.width = item.width + "px";
-        poster.style.height = item.height + "px";
-        console.log("url(tv_sprite_sheet/" + sheet.id + ") -" + item.x_offset + "px 0px");
-
-        poster.style.background = "url(tv_sprite_sheet/" + sheet.id + ") -" + item.x_offset + "px 0px";
+        set_image_properties_for_sprite_sheet(poster, sheet_for_image[0], sheet_for_image[1])
       }
     }
     card_content.appendChild(poster);

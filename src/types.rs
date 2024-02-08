@@ -117,6 +117,7 @@ pub struct SpriteSheetMetadataItem {
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct SpriteSheetMetadata {
     pub id: SpriteSheetId,
+    pub width: usize,
     pub items: Vec<SpriteSheetMetadataItem>,
 }
 

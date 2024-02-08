@@ -1,5 +1,6 @@
 :root {
   --card-border-radius: 10px;
+  --show-card-width: 150px;
 }
 
 body {
@@ -12,7 +13,7 @@ body {
 }
 
 .show-card {
-  width: 150px;
+  width: var(--show-card-width);
   margin: 5px;
   border-radius: var(--card-border-radius);
   position: relative;
