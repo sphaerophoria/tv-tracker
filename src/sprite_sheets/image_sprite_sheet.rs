@@ -97,10 +97,10 @@ impl RgbSpriteSheet {
 
         let source_lines = image
             .as_raw()
-            .chunks(self.item_width_bytes);
+            .chunks(image.width() as usize * PIXEL_SIZE);
 
         for (dest_line, source_line) in dest_lines.zip(source_lines) {
-            dest_line.copy_from_slice(source_line);
+            dest_line[0..source_line.len()].copy_from_slice(source_line);
         }
 
         x_start_bytes / PIXEL_SIZE
@@ -240,10 +240,7 @@ impl ImageSpriteSheet {
     }
 
     pub fn push_image(&mut self, id: ImageId, url: &str, image_path: &Path) -> Result<(), InsertImageError> {
-        // FIXME: return early if url matches
-        // FIXME: return error if capacity is already full
-        // FIXME: Store width and height of inserted item (may not be perfectly the slot size)
-        // FIXME: replace image if exists
+        println!("Pushing image");
         let slot = slot_for_id(&self.metadata.images, id);
 
         if let Some(existing_metadata) = self.metadata.find_id(id) {
@@ -258,14 +255,19 @@ impl ImageSpriteSheet {
 
         let img_data = load_image_for_sprite_sheet_insertion(image_path, self.metadata.item_width, self.metadata.item_height);
 
+        println!("Loading image");
         let mut sprite_sheet_image = RgbSpriteSheet::new(
             self.folder.image_path(),
             self.metadata.item_width,
             self.metadata.item_height,
             self.metadata.capacity,
         );
+        println!("Done loading");
         let x_offs_px = sprite_sheet_image.copy_image(&img_data, slot);
+
+        println!("Saving");
         sprite_sheet_image.save();
+        println!("Done saving");
 
         self.metadata.update(ItemMetadata {
             id,

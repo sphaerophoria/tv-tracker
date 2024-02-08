@@ -106,6 +106,20 @@ pub struct Movie {
     pub home_release_date: Option<chrono::NaiveDate>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct SpriteSheetMetadataItem {
+    pub id: ImageId,
+    pub width: usize,
+    pub height: usize,
+    pub x_offset: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct SpriteSheetMetadata {
+    pub id: SpriteSheetId,
+    pub items: Vec<SpriteSheetMetadataItem>,
+}
+
 macro_rules! impl_id {
     ($name:ident) => {
         #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -118,3 +132,4 @@ impl_id!(EpisodeId);
 impl_id!(RatingId);
 impl_id!(ImageId);
 impl_id!(MovieId);
+impl_id!(SpriteSheetId);

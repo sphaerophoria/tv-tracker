@@ -1,5 +1,5 @@
-mod image_sprite_sheet;
-mod image_sprite_sheet_cache;
+pub mod image_sprite_sheet;
+pub mod image_sprite_sheet_cache;
 // Once a sprite sheet is generated, an item should never move
 // /sprite_sheet_info
 // [

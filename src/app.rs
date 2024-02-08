@@ -13,10 +13,11 @@ use crate::{
     db::{self, AddShowError as DbAddShowError, Db, GetShowError},
     image_cache::{self, ImageCache},
     omdb::{OmdbError, OmdbIndexer},
+    sprite_sheets::image_sprite_sheet_cache::ImageSpriteSheetCache,
     tv_maze::{self, TvMazeApiError, TvMazeShowId},
     types::{
         EpisodeId, ImageId, Movie, MovieId, MovieUpdate, Rating, RatingId, RemoteMovie,
-        RemoteTvShow, ShowId, TvEpisode, TvShow, TvShowUpdate, WatchStatus,
+        RemoteTvShow, ShowId, TvEpisode, TvShow, TvShowUpdate, WatchStatus, SpriteSheetMetadata, SpriteSheetId,
     },
 };
 
@@ -224,6 +225,7 @@ pub enum SearchError {
 
 pub struct Inner {
     db: Mutex<Db>,
+    tv_sprite_sheets: Mutex<ImageSpriteSheetCache>,
     image_cache: ImageCache,
     omdb_indexer: OmdbIndexer,
 }
@@ -240,10 +242,12 @@ impl App {
         db: Db,
         omdb_indexer: OmdbIndexer,
         image_cache: ImageCache,
+        tv_sprite_sheets: ImageSpriteSheetCache,
         poll_indexers: bool,
     ) -> App {
         let inner = Inner {
             db: Mutex::new(db),
+            tv_sprite_sheets: Mutex::new(tv_sprite_sheets),
             omdb_indexer,
             image_cache,
         };
@@ -390,6 +394,37 @@ impl App {
         let db = self.inner.db.lock().expect("Poisoned lock");
         let url = db.get_image_url(id)?;
         Ok(self.inner.image_cache.get(&url)?)
+    }
+
+    pub fn sprite_sheet_info(&self) -> Vec<SpriteSheetMetadata> {
+        let images = {
+            let db = self.inner.db.lock().expect("Poisoned lock");
+            db.get_images()
+        };
+
+        let mut sprite_sheet_cache = self.inner.tv_sprite_sheets.lock().expect("Poisoned lock");
+        for (image_id, url) in images {
+            println!("image_id: {}", image_id.0);
+            println!("Checking cache");
+            if sprite_sheet_cache.image_in_cache(image_id, &url) {
+                continue;
+            }
+
+            println!("Getting path");
+            let img_path = self.inner.image_cache.get_path(&url).unwrap();
+            println!("Ensuring in sprite sheet");
+            sprite_sheet_cache.ensure_image_in_cache(
+                image_id,
+                &url,
+                &img_path);
+        }
+
+        sprite_sheet_cache.metadata()
+    }
+
+    pub fn get_sprite_sheet(&self, id: SpriteSheetId) -> Vec<u8> {
+        let mut sprite_sheet_cache = self.inner.tv_sprite_sheets.lock().expect("Poisoned lock");
+        sprite_sheet_cache.data(id)
     }
 
     pub fn get_merged_image(&self) -> (Vec<u8>, HashMap<ImageId, usize>) {

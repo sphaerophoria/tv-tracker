@@ -1,5 +1,5 @@
 #![allow(unused)]
-use crate::types::ImageId;
+use crate::types::{ImageId, SpriteSheetMetadata, SpriteSheetMetadataItem, SpriteSheetId};
 
 use super::image_sprite_sheet::ImageSpriteSheet;
 use std::path::{Path, PathBuf};
@@ -24,6 +24,8 @@ fn load_sheets(data_path: &Path) -> Vec<ImageSpriteSheet> {
                 SHEET_ITEM_WIDTH,
                 SHEET_ITEM_HEIGHT,
             ));
+        } else {
+            break;
         }
         i += 1;
     }
@@ -73,19 +75,54 @@ impl ImageSpriteSheetCache {
         }
     }
 
-    pub fn get_sheet_for_image(
+    pub fn image_in_cache(&self, id: ImageId, url: &str) -> bool {
+        if let Some(sheet_idx) = find_sheet_for_id(&self.sheets, id) {
+            let image_metadata = self.sheets[sheet_idx].metadata().images.iter().find(|item| item.id == id).unwrap();
+            image_metadata.url == url
+        } else {
+            false
+        }
+    }
+
+    pub fn ensure_image_in_cache(
         &mut self,
         id: ImageId,
         url: &str,
         image_path: &Path,
-    ) -> &ImageSpriteSheet {
+    ) {
         if let Some(sheet_idx) = find_sheet_for_id(&self.sheets, id) {
-            return &self.sheets[sheet_idx];
+            return;
         }
 
         let sheet_idx = get_sheet_with_capacity(&self.data_path, &mut self.sheets);
         let sheet = &mut self.sheets[sheet_idx];
         sheet.push_image(id, url, image_path);
-        sheet
+    }
+
+    pub fn metadata(&self) -> Vec<SpriteSheetMetadata> {
+        let mut output = Vec::new();
+        for (i, sheet) in self.sheets.iter().enumerate() {
+            let mut sheet_output = SpriteSheetMetadata {
+                id: SpriteSheetId(i as i64),
+                items: Vec::new(),
+            };
+            let sheet_metadata = sheet.metadata();
+            for item_metadata in &sheet_metadata.images {
+                let output_metadata = SpriteSheetMetadataItem {
+                    id: item_metadata.id,
+                    width: item_metadata.width as usize,
+                    height: item_metadata.height as usize,
+                    x_offset: item_metadata.x_offset,
+                };
+                sheet_output.items.push(output_metadata);
+            }
+            output.push(sheet_output);
+        }
+        output
+    }
+
+    pub fn data(&self, id: SpriteSheetId) -> Vec<u8> {
+        self.sheets[id.0 as usize].data()
+
     }
 }

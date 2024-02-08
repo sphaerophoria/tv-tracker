@@ -19,7 +19,7 @@ impl ImageCache {
         ImageCache { cache_dir }
     }
 
-    pub fn get(&self, url: &str) -> Result<Vec<u8>, GetImageError> {
+    pub fn get_path(&self, url: &str) -> Result<PathBuf, GetImageError> {
         if !self.cache_dir.exists() {
             std::fs::create_dir_all(&self.cache_dir)?;
         }
@@ -34,6 +34,12 @@ impl ImageCache {
             body.read_to_end(&mut content)?;
             std::fs::write(&fs_path, content)?;
         }
+
+        Ok(fs_path)
+    }
+
+    pub fn get(&self, url: &str) -> Result<Vec<u8>, GetImageError> {
+        let fs_path = self.get_path(url)?;
 
         Ok(std::fs::read(fs_path)?)
     }

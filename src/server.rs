@@ -11,7 +11,7 @@ use crate::{
     tv_maze::TvMazeShowId,
     types::{
         EpisodeId, ImageId, MovieId, MovieUpdate, Rating, RatingId, ShowId, TvShowUpdate,
-        WatchStatus,
+        WatchStatus, SpriteSheetId,
     },
 };
 
@@ -173,6 +173,23 @@ async fn get_image(req: tide::Request<App>) -> tide::Result<tide::Body> {
     Ok(body)
 }
 
+async fn get_sprite_sheet_info(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
+    let app = req.state();
+    let metadata = app.sprite_sheet_info();
+    let ret = serde_json::to_value(metadata).unwrap();
+    Ok(ret)
+}
+
+async fn get_sprite_sheet(req: tide::Request<App>) -> tide::Result<tide::Body> {
+    let id = req.param("id")?.parse()?;
+    let id = SpriteSheetId(id);
+
+    let app = req.state();
+    let mut body = tide::Body::from_bytes(app.get_sprite_sheet(id));
+    body.set_mime("image/png");
+    Ok(body)
+}
+
 async fn get_images_merged_metadata(req: tide::Request<App>) -> tide::Result<serde_json::Value> {
     let app = req.state();
     let metadata = app.get_merged_image().1;
@@ -324,6 +341,8 @@ impl Server {
             .delete(delete_rating);
 
         app.at("/images/:id").get(get_image);
+        app.at("/tv_sprite_sheet_info").get(get_sprite_sheet_info);
+        app.at("/tv_sprite_sheet/:id").get(get_sprite_sheet);
         app.at("/images_merged").get(get_images_merged);
         app.at("/images_merged_metadata")
             .get(get_images_merged_metadata);
