@@ -396,10 +396,10 @@ impl App {
         let metadata_path = std::path::Path::new("merged.json");
         let image_path = std::path::Path::new("merged.jpg");
         if image_path.exists() && metadata_path.exists() {
-            let image =  std::fs::read(image_path).unwrap();
+            let image = std::fs::read(image_path).unwrap();
             let f = std::io::BufReader::new(std::fs::File::open(metadata_path).unwrap());
             let metadata = serde_json::from_reader(f).unwrap();
-            return (image, metadata)
+            return (image, metadata);
         }
 
         let db = self.inner.db.lock().expect("Poisoned lock");
@@ -440,12 +440,19 @@ impl App {
             }
         }
 
-        image::save_buffer(image_path, &output, current_width, max_height, image::ColorType::Rgb8).unwrap();
+        image::save_buffer(
+            image_path,
+            &output,
+            current_width,
+            max_height,
+            image::ColorType::Rgb8,
+        )
+        .unwrap();
 
-        let metadata = loaded_images.into_iter().enumerate()
-            .map(|(i, (_, offset))| {
-                (images[i].0, offset as usize)
-            })
+        let metadata = loaded_images
+            .into_iter()
+            .enumerate()
+            .map(|(i, (_, offset))| (images[i].0, offset as usize))
             .collect();
 
         let mut f = std::fs::OpenOptions::new()
@@ -456,7 +463,7 @@ impl App {
             .unwrap();
         serde_json::to_writer(f, &metadata).unwrap();
 
-        return (std::fs::read(image_path).unwrap(), metadata)
+        return (std::fs::read(image_path).unwrap(), metadata);
     }
 
     pub fn add_movie(&self, imdb_id: &str) -> Result<Movie, AddMovieError> {

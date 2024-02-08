@@ -325,7 +325,8 @@ impl Server {
 
         app.at("/images/:id").get(get_image);
         app.at("/images_merged").get(get_images_merged);
-        app.at("/images_merged_metadata").get(get_images_merged_metadata);
+        app.at("/images_merged_metadata")
+            .get(get_images_merged_metadata);
 
         app.at("/movies").get(get_movies).put(put_movies);
 
