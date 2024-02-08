@@ -10,8 +10,8 @@ use crate::{
     app::App,
     tv_maze::TvMazeShowId,
     types::{
-        EpisodeId, ImageId, MovieId, MovieUpdate, Rating, RatingId, ShowId, TvShowUpdate,
-        WatchStatus, SpriteSheetId,
+        EpisodeId, ImageId, MovieId, MovieUpdate, Rating, RatingId, ShowId, SpriteSheetId,
+        TvShowUpdate, WatchStatus,
     },
 };
 

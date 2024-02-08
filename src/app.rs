@@ -17,7 +17,8 @@ use crate::{
     tv_maze::{self, TvMazeApiError, TvMazeShowId},
     types::{
         EpisodeId, ImageId, Movie, MovieId, MovieUpdate, Rating, RatingId, RemoteMovie,
-        RemoteTvShow, ShowId, TvEpisode, TvShow, TvShowUpdate, WatchStatus, SpriteSheetMetadata, SpriteSheetId,
+        RemoteTvShow, ShowId, SpriteSheetId, SpriteSheetMetadata, TvEpisode, TvShow, TvShowUpdate,
+        WatchStatus,
     },
 };
 
@@ -209,6 +210,21 @@ fn db_contains_show_id(
     Ok(false)
 }
 
+fn populate_sprite_sheets(db: &Db, image_cache: &ImageCache, sprite_sheet_cache: &mut ImageSpriteSheetCache) {
+    let images = db.get_images();
+
+    for (image_id, url) in images {
+        println!("image_id: {}", image_id.0);
+        println!("Checking cache");
+        if sprite_sheet_cache.image_in_cache(image_id, &url) {
+            continue;
+        }
+
+        let img_path = image_cache.get_path(&url).unwrap();
+        sprite_sheet_cache.ensure_image_in_cache(image_id, &url, &img_path);
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct SearchResults {
     movies: Vec<RemoteMovie>,
@@ -242,9 +258,11 @@ impl App {
         db: Db,
         omdb_indexer: OmdbIndexer,
         image_cache: ImageCache,
-        tv_sprite_sheets: ImageSpriteSheetCache,
+        mut tv_sprite_sheets: ImageSpriteSheetCache,
         poll_indexers: bool,
     ) -> App {
+        populate_sprite_sheets(&db, &image_cache, &mut tv_sprite_sheets);
+
         let inner = Inner {
             db: Mutex::new(db),
             tv_sprite_sheets: Mutex::new(tv_sprite_sheets),
@@ -277,21 +295,31 @@ impl App {
             return Err(AddShowError::ShowExists);
         }
 
-        let show = tv_maze::show(indexer_show_id).map_err(AddShowError::LookupShow)?;
+        let remote_show = tv_maze::show(indexer_show_id).map_err(AddShowError::LookupShow)?;
         let episodes = tv_maze::episodes(indexer_show_id);
         let episodes = episodes.map_err(AddShowError::LookupEpisodes)?;
 
-        let mut db = self.inner.db.lock().expect("Poisoned lock");
-        let show_id = db.add_show(&show).map_err(AddShowError::AddShowToDb)?;
+        let show = {
+            let mut db = self.inner.db.lock().expect("Poisoned lock");
+            let show_id = db.add_show(&remote_show).map_err(AddShowError::AddShowToDb)?;
 
-        for episode in episodes {
-            if let Err(e) = db.add_episode(&show_id, &episode) {
-                error!("Failed to insert episode into db: {e}");
+            for episode in episodes {
+                if let Err(e) = db.add_episode(&show_id, &episode) {
+                    error!("Failed to insert episode into db: {e}");
+                }
             }
+
+            db.get_show(&show_id, &today())
+                .map_err(AddShowError::GetShow)?
+        };
+
+        if let (Some(image_id), Some(url)) = (show.image, remote_show.url) {
+            let mut sprite_sheets = self.inner.tv_sprite_sheets.lock().expect("Poisoned lock");
+            let img_path = self.inner.image_cache.get_path(&url).unwrap();
+            sprite_sheets.ensure_image_in_cache(image_id, &url, &img_path);
         }
 
-        db.get_show(&show_id, &today())
-            .map_err(AddShowError::GetShow)
+        Ok(show)
     }
 
     pub fn remove_show(&self, show_id: &ShowId) -> Result<(), db::RemoveShowError> {
@@ -397,28 +425,7 @@ impl App {
     }
 
     pub fn sprite_sheet_info(&self) -> Vec<SpriteSheetMetadata> {
-        let images = {
-            let db = self.inner.db.lock().expect("Poisoned lock");
-            db.get_images()
-        };
-
-        let mut sprite_sheet_cache = self.inner.tv_sprite_sheets.lock().expect("Poisoned lock");
-        for (image_id, url) in images {
-            println!("image_id: {}", image_id.0);
-            println!("Checking cache");
-            if sprite_sheet_cache.image_in_cache(image_id, &url) {
-                continue;
-            }
-
-            println!("Getting path");
-            let img_path = self.inner.image_cache.get_path(&url).unwrap();
-            println!("Ensuring in sprite sheet");
-            sprite_sheet_cache.ensure_image_in_cache(
-                image_id,
-                &url,
-                &img_path);
-        }
-
+        let sprite_sheet_cache = self.inner.tv_sprite_sheets.lock().expect("Poisoned lock");
         sprite_sheet_cache.metadata()
     }
 

@@ -1,5 +1,5 @@
 #![allow(unused)]
-use crate::types::{ImageId, SpriteSheetMetadata, SpriteSheetMetadataItem, SpriteSheetId};
+use crate::types::{ImageId, SpriteSheetId, SpriteSheetMetadata, SpriteSheetMetadataItem};
 
 use super::image_sprite_sheet::ImageSpriteSheet;
 use std::path::{Path, PathBuf};
@@ -33,8 +33,7 @@ fn load_sheets(data_path: &Path) -> Vec<ImageSpriteSheet> {
 }
 
 fn sheet_contains_image(sheet: &ImageSpriteSheet, id: ImageId) -> bool {
-    sheet.metadata().images.iter()
-        .any(|item| item.id == id)
+    sheet.metadata().images.iter().any(|item| item.id == id)
 }
 
 fn find_sheet_for_id(sheets: &[ImageSpriteSheet], id: ImageId) -> Option<usize> {
@@ -77,19 +76,19 @@ impl ImageSpriteSheetCache {
 
     pub fn image_in_cache(&self, id: ImageId, url: &str) -> bool {
         if let Some(sheet_idx) = find_sheet_for_id(&self.sheets, id) {
-            let image_metadata = self.sheets[sheet_idx].metadata().images.iter().find(|item| item.id == id).unwrap();
+            let image_metadata = self.sheets[sheet_idx]
+                .metadata()
+                .images
+                .iter()
+                .find(|item| item.id == id)
+                .unwrap();
             image_metadata.url == url
         } else {
             false
         }
     }
 
-    pub fn ensure_image_in_cache(
-        &mut self,
-        id: ImageId,
-        url: &str,
-        image_path: &Path,
-    ) {
+    pub fn ensure_image_in_cache(&mut self, id: ImageId, url: &str, image_path: &Path) {
         if let Some(sheet_idx) = find_sheet_for_id(&self.sheets, id) {
             return;
         }
@@ -123,6 +122,5 @@ impl ImageSpriteSheetCache {
 
     pub fn data(&self, id: SpriteSheetId) -> Vec<u8> {
         self.sheets[id.0 as usize].data()
-
     }
 }

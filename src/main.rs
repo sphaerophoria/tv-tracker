@@ -147,8 +147,15 @@ fn main() {
     let omdb_indexer = OmdbIndexer::new(omdb_key.trim().to_string());
     let db = Db::new(&args.db_path).expect("Failed to create db");
     let poster_cache = ImageCache::new(args.cache_path.join("posters"));
-    let tv_sprite_sheet_cache = ImageSpriteSheetCache::new(args.cache_path.join("tv_sprite_sheets"));
-    let app = App::new(db, omdb_indexer, poster_cache, tv_sprite_sheet_cache, args.poll_indexers);
+    let tv_sprite_sheet_cache =
+        ImageSpriteSheetCache::new(args.cache_path.join("tv_sprite_sheets"));
+    let app = App::new(
+        db,
+        omdb_indexer,
+        poster_cache,
+        tv_sprite_sheet_cache,
+        args.poll_indexers,
+    );
     let server = Server::new(args.html_path.as_deref(), app).expect("Failed to create server");
     futures::executor::block_on(server.serve(args.port)).expect("Failed to run server");
 }
