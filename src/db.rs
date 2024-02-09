@@ -261,6 +261,20 @@ pub enum DeleteRatingError {
 pub struct SetShowRatingError(#[source] rusqlite::Error);
 
 #[derive(Debug, Error)]
+pub enum GetImagesError {
+    #[error("failed to prepare get image statement")]
+    Prepare(#[source] rusqlite::Error),
+    #[error("failed to query images")]
+    Query(#[source] rusqlite::Error),
+    #[error("failed to get row")]
+    GetRow(#[source] rusqlite::Error),
+    #[error("failed to parse image id")]
+    ParseId(#[source] rusqlite::Error),
+    #[error("failed to parse url")]
+    ParseUrl(#[source] rusqlite::Error),
+}
+
+#[derive(Debug, Error)]
 pub enum GetImageUrlError {
     #[error("failed to prepare get image statement")]
     Prepare(#[source] rusqlite::Error),
@@ -925,23 +939,23 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_images(&self) -> Vec<(ImageId, String)> {
+    pub fn get_images(&self) -> Result<Vec<(ImageId, String)>, GetImagesError> {
         let mut statement = self
             .connection
             .prepare("SELECT images.id, images.url FROM shows LEFT JOIN images ON shows.image_id = images.id")
-            .unwrap();
+            .map_err(GetImagesError::Prepare)?;
 
-        let mut rows = statement.query([]).unwrap();
+        let mut rows = statement.query([]).map_err(GetImagesError::Query)?;
 
         let mut output = Vec::new();
-        while let Some(row) = rows.next().unwrap() {
-            let image_id = ImageId(row.get(0).unwrap());
-            let url = row.get(1).unwrap();
+        while let Some(row) = rows.next().map_err(GetImagesError::GetRow)? {
+            let image_id = ImageId(row.get(0).map_err(GetImagesError::ParseId)?);
+            let url = row.get(1).map_err(GetImagesError::ParseUrl)?;
 
             output.push((image_id, url));
         }
 
-        output
+        Ok(output)
     }
 
     pub fn get_image_url(&self, image_id: &ImageId) -> Result<String, GetImageUrlError> {
@@ -2117,7 +2131,7 @@ mod test {
                 airdate: NaiveDate::from_num_days_from_ce_opt(((4000 + i) / 4) as i32),
             };
 
-            db.add_episode(&show_id, &episode).unwrap();
+            db.add_episode(&show_id, &episode).expect("Failed to add episode");
         }
 
         let start_date =

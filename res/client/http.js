@@ -7,7 +7,7 @@ async function get_json(url) {
 }
 
 async function put_json(url, data) {
-  const request = new Request(url,{
+  const request = new Request(url, {
     method: "PUT",
     body: JSON.stringify(data),
   });
@@ -16,19 +16,19 @@ async function put_json(url, data) {
 }
 
 export async function get_show_episodes(show_id) {
-  return await get_json("shows/" + show_id + "/episodes")
+  return await get_json("shows/" + show_id + "/episodes");
 }
 
 export async function get_shows() {
-  return await get_json("shows")
+  return await get_json("shows");
 }
 
 export async function get_show(show_id) {
-  return await get_json("shows/" + show_id)
+  return await get_json("shows/" + show_id);
 }
 
 export async function put_show(show) {
-  return await put_json("shows/" + show.id, show)
+  return await put_json("shows/" + show.id, show);
 }
 
 export async function delete_show(show_id) {
@@ -43,19 +43,19 @@ export async function get_episodes(start_date, end_date) {
     start_date: start_date,
     end_date: end_date,
   });
-  return await get_json("episodes?" + params.toString())
+  return await get_json("episodes?" + params.toString());
 }
 
 export async function put_episode(episode) {
-  return await put_json("episodes/" + episode.id, episode)
+  return await put_json("episodes/" + episode.id, episode);
 }
 
 export async function get_ratings() {
-  return await get_json("ratings")
+  return await get_json("ratings");
 }
 
 export async function put_ratings(rating) {
-  return await put_json("ratings", rating)
+  return await put_json("ratings", rating);
 }
 
 export async function put_rating(rating) {
@@ -70,15 +70,15 @@ export async function delete_rating(rating_id) {
 }
 
 export async function get_movies() {
-  return await get_json("movies")
+  return await get_json("movies");
 }
 
 export async function get_tv_sprite_sheet_info() {
-  return await get_json("tv_sprite_sheet_info")
+  return await get_json("tv_sprite_sheet_info");
 }
 
 export async function get_movie(movie_id) {
-  return await get_json("movies/" + movie_id)
+  return await get_json("movies/" + movie_id);
 }
 
 export async function put_movie(movie) {

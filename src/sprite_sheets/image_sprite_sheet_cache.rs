@@ -122,6 +122,6 @@ impl ImageSpriteSheetCache {
     }
 
     pub fn data(&self, id: SpriteSheetId) -> Vec<u8> {
-        self.sheets[id.0 as usize].data()
+        self.sheets[id.0 as usize].data().unwrap()
     }
 }

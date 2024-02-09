@@ -21,11 +21,6 @@ fn slot_for_id(ids: &[ItemMetadata], id: ImageId) -> usize {
     }
 }
 
-fn slot_to_x_offset_px(slot: usize, item_width: u32) -> u32 {
-    let slot_u32: u32 = slot.try_into().unwrap();
-    slot_u32 * item_width
-}
-
 const PIXEL_SIZE: usize = 3;
 
 fn create_sprite_sheet_image(
@@ -33,7 +28,7 @@ fn create_sprite_sheet_image(
     item_width: u32,
     item_height: u32,
     capacity: usize,
-) {
+) -> Result<(), image::ImageError> {
     let width = item_width as usize * capacity;
     let height = item_height as usize;
     let data = vec![0; width * height * PIXEL_SIZE];
@@ -45,7 +40,14 @@ fn create_sprite_sheet_image(
         height as u32,
         ColorType::Rgb8,
     )
-    .unwrap();
+}
+
+#[derive(Error, Debug)]
+enum OpenImageError {
+    #[error("failed to create image")]
+    Create(#[source] image::ImageError),
+    #[error("failed to open image")]
+    Open(#[source] image::ImageError),
 }
 
 fn open_sprite_sheet_image(
@@ -53,24 +55,26 @@ fn open_sprite_sheet_image(
     item_width: u32,
     item_height: u32,
     capacity: usize,
-) -> RgbImage {
+) -> Result<RgbImage, OpenImageError> {
     if !image_path.exists() {
-        create_sprite_sheet_image(&image_path, item_width, item_height, capacity);
+        create_sprite_sheet_image(image_path, item_width, item_height, capacity)
+            .map_err(OpenImageError::Create)?;
     }
 
-    let sprite_sheet = image::open(image_path).unwrap();
-    sprite_sheet.to_rgb8()
+    let sprite_sheet = image::open(image_path).map_err(OpenImageError::Open)?;
+    Ok(sprite_sheet.to_rgb8())
 }
 
 fn load_image_for_sprite_sheet_insertion(
     image_path: &Path,
     item_width: u32,
     item_height: u32,
-) -> RgbImage {
-    let img_data = image::open(image_path).unwrap();
-    img_data
+) -> Result<RgbImage, image::ImageError> {
+    let img_data = image::open(image_path)?;
+    let ret = img_data
         .resize(item_width, item_height, FilterType::Lanczos3)
-        .to_rgb8()
+        .to_rgb8();
+    Ok(ret)
 }
 
 struct RgbSpriteSheet {
@@ -86,18 +90,18 @@ impl RgbSpriteSheet {
         item_width_px: u32,
         item_height_px: u32,
         capacity: usize,
-    ) -> RgbSpriteSheet {
+    ) -> Result<RgbSpriteSheet, OpenImageError> {
         let img =
-            open_sprite_sheet_image(&sheet_image_path, item_width_px, item_height_px, capacity);
+            open_sprite_sheet_image(&sheet_image_path, item_width_px, item_height_px, capacity)?;
         let sheet_width_bytes = img.width() as usize * PIXEL_SIZE;
         let item_width_bytes = item_width_px as usize * PIXEL_SIZE;
 
-        RgbSpriteSheet {
+        Ok(RgbSpriteSheet {
             sheet_image_path,
             sheet_width_bytes,
             item_width_bytes,
             buf: img.into_raw(),
-        }
+        })
     }
 
     fn slot_to_x_offset_bytes(&self, slot: usize) -> usize {
@@ -123,7 +127,7 @@ impl RgbSpriteSheet {
         x_start_bytes / PIXEL_SIZE
     }
 
-    fn save(&self) {
+    fn save(&self) -> Result<(), image::ImageError> {
         image::save_buffer(
             &self.sheet_image_path,
             &self.buf,
@@ -131,7 +135,6 @@ impl RgbSpriteSheet {
             self.buf.len() as u32 / self.sheet_width_bytes as u32,
             ColorType::Rgb8,
         )
-        .unwrap();
     }
 }
 
@@ -203,6 +206,12 @@ impl Metadata {
 enum InsertImageErrorKind {
     #[error("sprite sheet full")]
     Full,
+    #[error("failed to load image")]
+    LoadImage(#[source] image::ImageError),
+    #[error("failed to load sprite sheet")]
+    LoadSpriteSheet(#[source] OpenImageError),
+    #[error("failed to save sprite sheet")]
+    SaveSpriteSheet(#[source] image::ImageError),
 }
 
 #[derive(Debug, Error)]
@@ -273,17 +282,17 @@ impl ImageSpriteSheet {
             image_path,
             self.metadata.item_width,
             self.metadata.item_height,
-        );
+        ).map_err(InsertImageErrorKind::LoadImage)?;
 
         let mut sprite_sheet_image = RgbSpriteSheet::new(
             self.folder.image_path(),
             self.metadata.item_width,
             self.metadata.item_height,
             self.metadata.capacity,
-        );
+        ).map_err(InsertImageErrorKind::LoadSpriteSheet)?;
         let x_offs_px = sprite_sheet_image.copy_image(&img_data, slot);
 
-        sprite_sheet_image.save();
+        sprite_sheet_image.save().map_err(InsertImageErrorKind::SaveSpriteSheet)?;
 
         self.metadata.update(ItemMetadata {
             id,
@@ -298,8 +307,8 @@ impl ImageSpriteSheet {
         Ok(())
     }
 
-    pub fn data(&self) -> Vec<u8> {
-        std::fs::read(&self.folder.image_path()).unwrap()
+    pub fn data(&self) -> Result<Vec<u8>, std::io::Error> {
+        std::fs::read(self.folder.image_path())
     }
 
     pub fn remaining_capacity(&self) -> usize {
@@ -382,7 +391,7 @@ mod test {
             sheet.metadata().capacity * sheet.metadata().item_width as usize * PIXEL_SIZE;
         let mut output = Vec::new();
         let data = sheet.data();
-        let data = image::load_from_memory(&data).unwrap().to_rgb8().into_raw();
+        let data = image::load_from_memory(&data).expect("Failed to load image").to_rgb8().into_raw();
         for y in 0..item_metadata.height {
             for x in item_metadata.x_offset * PIXEL_SIZE as u32
                 ..item_metadata.x_offset * PIXEL_SIZE as u32

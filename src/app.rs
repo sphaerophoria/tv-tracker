@@ -36,6 +36,8 @@ pub enum AddShowError {
     AddShowToDb(#[source] DbAddShowError),
     #[error("failed to get show after add")]
     GetShow(#[source] db::GetShowError),
+    #[error("failed to update image cache")]
+    UpdateImageCache(#[source] image_cache::GetImageError),
 }
 
 #[derive(Debug, Error)]
@@ -210,8 +212,12 @@ fn db_contains_show_id(
     Ok(false)
 }
 
-fn populate_sprite_sheets(db: &Db, image_cache: &ImageCache, sprite_sheet_cache: &mut ImageSpriteSheetCache) {
-    let images = db.get_images();
+fn populate_sprite_sheets(
+    db: &Db,
+    image_cache: &ImageCache,
+    sprite_sheet_cache: &mut ImageSpriteSheetCache,
+) -> Result<(), db::GetImagesError> {
+    let images = db.get_images()?;
 
     for (image_id, url) in images {
         println!("image_id: {}", image_id.0);
@@ -223,6 +229,8 @@ fn populate_sprite_sheets(db: &Db, image_cache: &ImageCache, sprite_sheet_cache:
         let img_path = image_cache.get_path(&url).unwrap();
         sprite_sheet_cache.ensure_image_in_cache(image_id, &url, &img_path);
     }
+
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -261,7 +269,9 @@ impl App {
         mut tv_sprite_sheets: ImageSpriteSheetCache,
         poll_indexers: bool,
     ) -> App {
-        populate_sprite_sheets(&db, &image_cache, &mut tv_sprite_sheets);
+        if let Err(e) =  populate_sprite_sheets(&db, &image_cache, &mut tv_sprite_sheets) {
+            error!("Failed to populate sprite sheets: {}", e);
+        }
 
         let inner = Inner {
             db: Mutex::new(db),
@@ -301,7 +311,9 @@ impl App {
 
         let show = {
             let mut db = self.inner.db.lock().expect("Poisoned lock");
-            let show_id = db.add_show(&remote_show).map_err(AddShowError::AddShowToDb)?;
+            let show_id = db
+                .add_show(&remote_show)
+                .map_err(AddShowError::AddShowToDb)?;
 
             for episode in episodes {
                 if let Err(e) = db.add_episode(&show_id, &episode) {
@@ -315,7 +327,7 @@ impl App {
 
         if let (Some(image_id), Some(url)) = (show.image, remote_show.url) {
             let mut sprite_sheets = self.inner.tv_sprite_sheets.lock().expect("Poisoned lock");
-            let img_path = self.inner.image_cache.get_path(&url).unwrap();
+            let img_path = self.inner.image_cache.get_path(&url).map_err(AddShowError::UpdateImageCache)?;
             sprite_sheets.ensure_image_in_cache(image_id, &url, &img_path);
         }
 
@@ -430,82 +442,8 @@ impl App {
     }
 
     pub fn get_sprite_sheet(&self, id: SpriteSheetId) -> Vec<u8> {
-        let mut sprite_sheet_cache = self.inner.tv_sprite_sheets.lock().expect("Poisoned lock");
+        let sprite_sheet_cache = self.inner.tv_sprite_sheets.lock().expect("Poisoned lock");
         sprite_sheet_cache.data(id)
-    }
-
-    pub fn get_merged_image(&self) -> (Vec<u8>, HashMap<ImageId, usize>) {
-        let metadata_path = std::path::Path::new("merged.json");
-        let image_path = std::path::Path::new("merged.jpg");
-        if image_path.exists() && metadata_path.exists() {
-            let image = std::fs::read(image_path).unwrap();
-            let f = std::io::BufReader::new(std::fs::File::open(metadata_path).unwrap());
-            let metadata = serde_json::from_reader(f).unwrap();
-            return (image, metadata);
-        }
-
-        let db = self.inner.db.lock().expect("Poisoned lock");
-        let images = db.get_images();
-        let mut max_height = 0;
-        let mut current_width = 0;
-        // FIXME: Should we store all images at once :(
-        let mut loaded_images = Vec::new();
-        for (image_id, url) in &images {
-            print!("{}: {url}\r", image_id.0);
-            let image_data = self.inner.image_cache.get(&url).unwrap();
-            let image = image::load_from_memory(&image_data).unwrap();
-            let width = image.width();
-            max_height = image.height().max(max_height);
-            loaded_images.push((image.to_rgb8(), current_width));
-            current_width += width;
-        }
-        println!();
-
-        const MAX_CANAVS_SIZE_BYTES: usize = 100_000_000;
-
-        let vec_size_bytes: usize = (3 * current_width * max_height) as usize;
-        if vec_size_bytes > MAX_CANAVS_SIZE_BYTES {
-            panic!("Too big :(");
-        }
-        let mut output = vec![0; vec_size_bytes];
-
-        for (image, x_pos) in &loaded_images {
-            let source_width = image.width();
-            let source_image_raw: &[u8] = image.as_raw();
-            let source_row_iter = source_image_raw.chunks(source_width as usize * 3);
-            for (y, row) in source_row_iter.enumerate() {
-                let dest_start = y * current_width as usize * 3 + *x_pos as usize * 3;
-                let dest_end = dest_start + source_width as usize * 3;
-
-                let dest_data = &mut output[dest_start..dest_end];
-                dest_data.copy_from_slice(row);
-            }
-        }
-
-        image::save_buffer(
-            image_path,
-            &output,
-            current_width,
-            max_height,
-            image::ColorType::Rgb8,
-        )
-        .unwrap();
-
-        let metadata = loaded_images
-            .into_iter()
-            .enumerate()
-            .map(|(i, (_, offset))| (images[i].0, offset as usize))
-            .collect();
-
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(metadata_path)
-            .unwrap();
-        serde_json::to_writer(f, &metadata).unwrap();
-
-        return (std::fs::read(image_path).unwrap(), metadata);
     }
 
     pub fn add_movie(&self, imdb_id: &str) -> Result<Movie, AddMovieError> {

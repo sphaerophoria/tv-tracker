@@ -12,8 +12,10 @@ function find_sprite_sheet(sprite_sheet_info, image_id) {
 }
 
 function get_show_card_width_from_css() {
-    let show_card_width = getComputedStyle(document.body).getPropertyValue("--show-card-width");
-    return Number(show_card_width.substring(0, show_card_width.search("px")))
+  let show_card_width = getComputedStyle(document.body).getPropertyValue(
+    "--show-card-width",
+  );
+  return Number(show_card_width.substring(0, show_card_width.search("px")));
 }
 
 function set_image_properties_for_sprite_sheet(img, sheet, item) {
@@ -21,9 +23,10 @@ function set_image_properties_for_sprite_sheet(img, sheet, item) {
   const show_card_width = get_show_card_width_from_css();
   const scaling_factor = show_card_width / item.width;
 
-  img.style.height = (scaling_factor * item.height) + "px";
+  img.style.height = scaling_factor * item.height + "px";
   img.style.background = "url(tv_sprite_sheet/" + sheet.id + ")";
-  img.style.backgroundPosition = "-" + (item.x_offset * scaling_factor) + "px 0px";
+  img.style.backgroundPosition =
+    "-" + item.x_offset * scaling_factor + "px 0px";
   img.style.backgroundSize = sheet.width * scaling_factor + "px " + "auto";
 }
 
@@ -51,9 +54,13 @@ export function render_card_element(show, href, sprite_sheet_info) {
     } else {
       let sheet_for_image = find_sprite_sheet(sprite_sheet_info, show.image);
       if (sheet_for_image === null) {
-        poster.src = "images/" + show.image
+        poster.src = "images/" + show.image;
       } else {
-        set_image_properties_for_sprite_sheet(poster, sheet_for_image[0], sheet_for_image[1])
+        set_image_properties_for_sprite_sheet(
+          poster,
+          sheet_for_image[0],
+          sheet_for_image[1],
+        );
       }
     }
     card_content.appendChild(poster);
