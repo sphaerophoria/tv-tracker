@@ -43,11 +43,25 @@ async function remove_show(show_id) {
   window.location.href = "watch_list.html";
 }
 
+// This is so that we can index into a new playthrough without worrying about
+// going out of bounds
+function append_to_watch_status(episode) {
+  episode.watch_status.push("Unwatched");
+}
+
+function append_to_watch_statuses(episodes) {
+  for (const episode_id in episodes) {
+    append_to_watch_status(episodes[episode_id]);
+  }
+}
+
 class ShowPage {
   constructor(show, episodes, ratings) {
     this.show = show;
     this.episodes = episodes;
     this.ratings = ratings;
+
+    append_to_watch_statuses(this.episodes);
 
     const mark_watched_button = document.getElementById("mark-all-watched");
     mark_watched_button.onclick = () => this.mark_aired_watched();
@@ -57,6 +71,21 @@ class ShowPage {
 
     const remove_show_button = document.getElementById("remove-show");
     remove_show_button.onclick = () => remove_show(this.show.id);
+
+    const playthrough_input = document.getElementById(
+      "multi-playthough-selector",
+    );
+
+    // NOTE: This means if we try to start two playthroughs back to back we
+    // have to refresh the page. Not ideal, but in practice not a problem
+    playthrough_input.max = this.show.episodes_watched.length + 1;
+
+    playthrough_input.value = this.show.episodes_watched.length;
+    this.playthrough = Number(playthrough_input.value) - 1;
+    playthrough_input.oninput = (ev) => {
+      this.playthrough = Number(ev.target.value) - 1;
+      this.render_show();
+    };
   }
 
   async mark_aired_watched() {
@@ -67,7 +96,7 @@ class ShowPage {
       const episode = this.episodes[episode_id];
       if (now > Date.parse(episode.airdate)) {
         let new_episode = window.structuredClone(episode);
-        new_episode.watch_status = {
+        new_episode.watch_status[this.playthrough] = {
           Watched: date_string,
         };
         promises.push(this.put_episode(new_episode));
@@ -82,7 +111,7 @@ class ShowPage {
     let promises = [];
     for (const episode_id in this.episodes) {
       let new_episode = window.structuredClone(this.episodes[episode_id]);
-      new_episode.watch_status = "Unwatched";
+      new_episode.watch_status[this.playthrough] = "Unwatched";
       promises.push(this.put_episode(new_episode));
     }
 
@@ -92,14 +121,14 @@ class ShowPage {
 
   async set_episode_unwatched(episode_id) {
     let episode = window.structuredClone(this.episodes[episode_id]);
-    episode.watch_status = "Unwatched";
+    episode.watch_status[this.playthrough] = "Unwatched";
     await this.put_episode(episode);
     this.render_show();
   }
 
   async set_episode_skipped(episode_id) {
     let episode = window.structuredClone(this.episodes[episode_id]);
-    episode.watch_status = "Skipped";
+    episode.watch_status[this.playthrough] = "Skipped";
     await this.put_episode(episode);
     this.render_show();
   }
@@ -109,7 +138,7 @@ class ShowPage {
 
     const now = new Date(Date.now());
     let date_string = now.toISOString().substring(0, 10);
-    episode.watch_status = {
+    episode.watch_status[this.playthrough] = {
       Watched: date_string,
     };
 
@@ -130,7 +159,19 @@ class ShowPage {
   }
 
   async put_episode(episode) {
-    let response = await put_episode(episode);
+    // We have injected an extra playthrough for UI convenience. This should
+    // _not_ make it back to the server. We need to clamp the length of the
+    // watched field to the number of playthroughs UNLESS we are starting
+    // a new playthrough
+
+    const expected_num_playthroughs = this.show.episodes_watched.length;
+    const clone = structuredClone(episode);
+    if (clone.watch_status[expected_num_playthroughs - 1] === "Unwatched") {
+      clone.watch_status.pop();
+    }
+
+    let response = await put_episode(clone);
+    append_to_watch_status(response);
     this.episodes[response.id] = response;
   }
 
@@ -205,10 +246,10 @@ class ShowPage {
         episode_holder.appendChild(watched_button);
 
         let watched_class = "unknown";
-        if (episode.watch_status.Watched != null) {
+        if (episode.watch_status[this.playthrough].Watched != null) {
           watched_button.classList.add("active");
           watched_class = "watched";
-        } else if (episode.watch_status == "Skipped") {
+        } else if (episode.watch_status[this.playthrough] == "Skipped") {
           skipped_button.classList.add("active");
           watched_class = "skipped";
         } else {

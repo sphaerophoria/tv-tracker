@@ -31,41 +31,51 @@ export function render_card_element(show, href) {
     card_content.appendChild(poster);
   }
 
-  const progress_div = document.createElement("div");
-  progress_div.classList.add("show-progress");
-  card_content.appendChild(progress_div);
+  const progress = [];
+  const skipped_progress = [];
+  if (show.episodes_aired !== undefined && show.episodes_watched.length > 0) {
+    for (const num_watched of show.episodes_watched) {
+      progress.push(num_watched / show.episodes_aired);
+    }
 
-  const watched_div = document.createElement("div");
-  watched_div.classList.add("num-watched");
-  progress_div.appendChild(watched_div);
-
-  let progress = 0;
-  if (show.episodes_aired !== undefined && show.episodes_aired > 0) {
-    progress = show.episodes_watched / show.episodes_aired;
+    for (const num_skipped of show.episodes_skipped) {
+      skipped_progress.push(num_skipped / show.episodes_aired);
+    }
   } else if (show.watched === true) {
-    progress = 1.0;
+    // movie
+    progress.push(1.0);
+  } else {
+    progress.push(0.0);
   }
 
-  if (progress !== undefined) {
-    watched_div.style.width = "" + progress * 100 + "%";
-  }
+  for (let i = 0; i < progress.length; ++i) {
+    const progress_elem = progress[i];
+    const skipped_elem = skipped_progress[i];
+    const progress_div = document.createElement("div");
+    progress_div.classList.add("show-progress");
+    card_content.appendChild(progress_div);
 
-  const skipped_div = document.createElement("div");
-  skipped_div.classList.add("num-skipped");
-  progress_div.appendChild(skipped_div);
+    const watched_div = document.createElement("div");
+    watched_div.classList.add("num-watched");
+    progress_div.appendChild(watched_div);
 
-  let skipped_progress = 0;
-  if (show.episodes_skipped !== undefined && show.episodes_aired > 0) {
-    skipped_progress = show.episodes_skipped / show.episodes_aired;
-  }
-  if (skipped_progress !== undefined) {
-    skipped_div.style.width = "" + skipped_progress * 100 + "%";
-  }
+    if (progress_elem !== undefined) {
+      watched_div.style.width = "" + progress_elem * 100 + "%";
+    }
 
-  const unwatched_div = document.createElement("div");
-  unwatched_div.classList.add("num-unwatched");
-  unwatched_div.style.width = "auto";
-  progress_div.appendChild(unwatched_div);
+    const skipped_div = document.createElement("div");
+    skipped_div.classList.add("num-skipped");
+    progress_div.appendChild(skipped_div);
+
+    if (skipped_elem !== undefined) {
+      skipped_div.style.width = "" + skipped_elem * 100 + "%";
+    }
+
+    const unwatched_div = document.createElement("div");
+    unwatched_div.classList.add("num-unwatched");
+    unwatched_div.style.width = "auto";
+    progress_div.appendChild(unwatched_div);
+  }
 
   const name = document.createElement("p");
   name.innerText = show.name;

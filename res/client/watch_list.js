@@ -60,6 +60,35 @@ function group_by_rating(shows_obj, ratings_obj) {
   return groups;
 }
 
+function sum_all_elems(arr) {
+  let sum = 0;
+  for (const x of arr) {
+    sum += x;
+  }
+  return sum;
+}
+
+function all_episodes_watched_or_skipped_in_all_playthroughs(show) {
+  if (show.episodes_watched.length === 0) {
+    return false;
+  }
+
+  return (
+    sum_all_elems(show.episodes_watched) +
+      sum_all_elems(show.episodes_skipped) ==
+    show.episodes_aired * show.episodes_watched.length
+  );
+}
+
+function any_playthrough_has_watched_episode(show) {
+  for (const playthrough of show.episodes_watched) {
+    if (playthrough > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function group_shows_by_watch_status(shows) {
   let next_up_shows = [];
   let finished_shows = [];
@@ -67,11 +96,11 @@ function group_shows_by_watch_status(shows) {
   let paused_shows = [];
 
   for (const show of Object.values(shows)) {
-    if (show.episodes_watched + show.episodes_skipped == show.episodes_aired) {
+    if (all_episodes_watched_or_skipped_in_all_playthroughs(show)) {
       finished_shows.push(show);
     } else if (show.pause_status) {
       paused_shows.push(show);
-    } else if (show.episodes_watched > 0) {
+    } else if (any_playthrough_has_watched_episode(show)) {
       next_up_shows.push(show);
     } else {
       unstarted_shows.push(show);

@@ -36,6 +36,8 @@ pub enum DbCreationError {
     CreateRatings(#[source] rusqlite::Error),
     #[error("failed to create skipped episodes table")]
     CreateSkippedEpisodes(#[source] rusqlite::Error),
+    #[error("failed to add playthrough ID to watch status")]
+    AddPlaythroughId(#[source] rusqlite::Error),
 }
 
 #[derive(Debug, Error)]
@@ -96,16 +98,30 @@ pub enum GetShowError {
     GetTvMazeUrl(#[source] rusqlite::Error),
     #[error("failed to get pause status")]
     GetPauseStatus(#[source] rusqlite::Error),
-    #[error("failed to get watch count")]
-    GetWatchCount(#[source] rusqlite::Error),
     #[error("failed to get aired count")]
     GetAiredCount(#[source] rusqlite::Error),
-    #[error("failed to get skip count")]
-    GetSkipCount(#[source] rusqlite::Error),
     #[error("incorrect number of elements returned")]
     IncorrectLen,
     #[error("failed to get rating id")]
     GetRatingId(#[source] rusqlite::Error),
+    #[error("failed to append watch status")]
+    AppendWatchStatus(#[from] AppendShowWatchStatusError),
+}
+
+#[derive(Debug, Error)]
+pub enum AppendShowWatchStatusError {
+    #[error("failed to prepare get show watch status request")]
+    Prepare(#[source] rusqlite::Error),
+    #[error("failed to execute get show watch status request")]
+    Execute(#[source] rusqlite::Error),
+    #[error("failed to get row from query response")]
+    GetRow(#[source] rusqlite::Error),
+    #[error("failed to get playthrough id")]
+    GetPlaythroughId(#[source] rusqlite::Error),
+    #[error("invalid playthrough id")]
+    InvalidPlaythroughId(#[source] std::num::TryFromIntError),
+    #[error("failed to get count")]
+    GetCount(#[source] rusqlite::Error),
 }
 
 #[derive(Debug, Error)]
@@ -121,9 +137,9 @@ pub enum AddEpisodeError {
 #[derive(Debug, Error)]
 #[error("failed to get episodes from db")]
 pub enum GetEpisodeError {
-    #[error("failed to prepare get show request")]
+    #[error("failed to prepare get episode request")]
     Prepare(#[source] rusqlite::Error),
-    #[error("failed to execute get show request")]
+    #[error("failed to execute get episode request")]
     Execute(#[source] rusqlite::Error),
     #[error("failed to get row from query")]
     GetRow(#[source] rusqlite::Error),
@@ -141,12 +157,26 @@ pub enum GetEpisodeError {
     GetAirdate(#[source] rusqlite::Error),
     #[error("failed to get watch date")]
     GetWatchdate(#[source] rusqlite::Error),
-    #[error("failed to get skip status")]
-    GetSkipStatus(#[source] rusqlite::Error),
+    #[error("failed to get playthrough id")]
+    GetPlaythroughId(#[source] rusqlite::Error),
+    #[error("failed to get num playthroughs for show")]
+    GetNumPlaythroughs(#[from] NumPlaythroughsError),
     #[error("failed to parse airdate")]
     InvalidDate,
     #[error("query returned wrong number of results")]
     IncorrectLen,
+}
+
+#[derive(Debug, Error)]
+pub enum NumPlaythroughsError {
+    #[error("failed to prepare get num playthroughs request")]
+    Prepare(#[source] rusqlite::Error),
+    #[error("failed to execute get num playthroughs request")]
+    Execute(#[source] rusqlite::Error),
+    #[error("failed to get row from query")]
+    GetRow(#[source] rusqlite::Error),
+    #[error("failed to get max playthrough id")]
+    GetMaxPlaythrough(#[source] rusqlite::Error),
 }
 
 #[derive(Debug, Error)]
@@ -175,6 +205,8 @@ pub enum SetWatchStatusError {
     InsertSkip(#[source] rusqlite::Error),
     #[error("failed to commit transaction")]
     CommitTransaction(#[source] rusqlite::Error),
+    #[error("too many playthroughs")]
+    TooManyPlaythroughs(#[source] std::num::TryFromIntError),
 }
 
 #[derive(Debug, Error)]
@@ -183,7 +215,7 @@ pub struct SetPauseError(#[source] rusqlite::Error);
 
 const GET_SHOWS_QUERY: &str =
     "
-    SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_id, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, watch_count.count, epi_count.count, paused_shows.show_id, show_ratings.rating_id, skipped_count.count FROM shows
+    SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_id, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, epi_count.count, paused_shows.show_id, show_ratings.rating_id FROM shows
     LEFT JOIN
         (
             SELECT show_id, COUNT(*) as count FROM episodes
@@ -192,20 +224,6 @@ const GET_SHOWS_QUERY: &str =
 
         ) as epi_count
         ON shows.id = epi_count.show_id
-    LEFT JOIN
-        (
-            SELECT show_id, COUNT(*) as count FROM episode_watch_status
-            LEFT JOIN episodes WHERE episodes.id = episode_watch_status.episode_id
-            GROUP BY show_id
-        ) as watch_count
-        ON shows.id = watch_count.show_id
-    LEFT JOIN
-        (
-            SELECT show_id, COUNT(*) as count FROM skipped_episodes
-            LEFT JOIN episodes WHERE episodes.id = skipped_episodes.episode_id
-            GROUP BY show_id
-        ) as skipped_count
-        ON shows.id = skipped_count.show_id
     LEFT JOIN paused_shows ON shows.id = paused_shows.show_id
     LEFT JOIN show_ratings ON shows.id = show_ratings.show_id
     ";
@@ -471,15 +489,13 @@ impl Db {
                     url: 5,
                     imdb_id: 6,
                     tvdb_id: 7,
-                    episodes_watched: 8,
-                    num_episodes: 9,
-                    pause_status: 10,
-                    rating_id: 11,
-                    episodes_skipped: 12,
+                    num_episodes: 8,
+                    pause_status: 9,
+                    rating_id: 10,
                 },
             )?;
 
-            ret.insert(show.id, show);
+            ret.insert(show.id, append_show_watch_status(&self.connection, show)?);
         }
 
         Ok(ret)
@@ -561,7 +577,9 @@ impl Db {
     pub fn get_episode(&self, episode_id: &EpisodeId) -> Result<TvEpisode, GetEpisodeError> {
         let mut statement = self
             .connection
-            .prepare("SELECT id, show_id, name, season, episode, airdate, watch_date, skipped_episodes.episode_id FROM episodes LEFT JOIN episode_watch_status ON episodes.id = episode_watch_status.episode_id LEFT JOIN skipped_episodes ON episodes.id = skipped_episodes.episode_id WHERE id = ?1")
+            .prepare(
+                "SELECT id, show_id, name, season, episode, airdate FROM episodes WHERE id = ?1",
+            )
             .map_err(GetEpisodeError::Prepare)?;
 
         let mut rows = statement
@@ -582,10 +600,11 @@ impl Db {
                 season: 3,
                 episode: 4,
                 airdate: 5,
-                watch_date: 6,
-                skip_state: 7,
             },
         )?;
+
+        let num_playthroughs = num_playthroughs_for_show(&self.connection, episode.show_id)?;
+        let episode = append_episode_watch_status(&self.connection, episode, num_playthroughs)?;
 
         Ok(episode)
     }
@@ -605,6 +624,8 @@ impl Db {
 
         let mut ret = HashMap::new();
 
+        let num_playthroughs = num_playthroughs_for_show(&self.connection, *show)?;
+
         while let Ok(Some(row)) = rows.next() {
             let episode = episode_from_row_indices(
                 row,
@@ -615,10 +636,10 @@ impl Db {
                     season: 3,
                     episode: 4,
                     airdate: 5,
-                    watch_date: 6,
-                    skip_state: 7,
                 },
             )?;
+
+            let episode = append_episode_watch_status(&self.connection, episode, num_playthroughs)?;
 
             ret.insert(episode.id, episode);
         }
@@ -629,59 +650,63 @@ impl Db {
     pub fn set_episode_watch_status(
         &mut self,
         episode: &EpisodeId,
-        status: &WatchStatus,
+        statuses: &[WatchStatus],
     ) -> Result<(), SetWatchStatusError> {
         let transaction = self
             .connection
             .transaction()
             .map_err(SetWatchStatusError::StartTransaction)?;
 
-        transaction
-            .execute(
-                "
-                DELETE FROM episode_watch_status
-                WHERE episode_id = ?1
-                ",
-                [episode.0],
-            )
-            .map_err(SetWatchStatusError::DeleteWatchDate)?;
+        for (i, status) in statuses.iter().enumerate() {
+            let playthrough_id = i
+                .try_into()
+                .map_err(SetWatchStatusError::TooManyPlaythroughs)?;
+            transaction
+                .execute(
+                    "
+                    DELETE FROM episode_watch_status
+                    WHERE episode_id = ?1 AND playthrough_id = ?2
+                    ",
+                    [episode.0, playthrough_id],
+                )
+                .map_err(SetWatchStatusError::DeleteWatchDate)?;
 
-        transaction
-            .execute(
-                "
-                DELETE FROM skipped_episodes
-                WHERE episode_id = ?1
-                ",
-                [episode.0],
-            )
-            .map_err(SetWatchStatusError::DeleteSkippedEpisode)?;
+            transaction
+                .execute(
+                    "
+                    DELETE FROM skipped_episodes
+                    WHERE episode_id = ?1 AND playthrough_id = ?2
+                    ",
+                    [episode.0, playthrough_id],
+                )
+                .map_err(SetWatchStatusError::DeleteSkippedEpisode)?;
 
-        match status {
-            WatchStatus::Watched(date) => {
-                transaction
-                    .execute(
-                        "
-                        INSERT OR IGNORE INTO episode_watch_status(episode_id, watch_date)
-                        VALUES (?1, ?2)
-                        ",
-                        params![episode.0, date.num_days_from_ce()],
-                    )
-                    .map_err(SetWatchStatusError::InsertWatchDate)?;
+            match status {
+                WatchStatus::Watched(date) => {
+                    transaction
+                        .execute(
+                            "
+                            INSERT OR IGNORE INTO episode_watch_status(episode_id, watch_date, playthrough_id)
+                            VALUES (?1, ?2, ?3)
+                            ",
+                            params![episode.0, date.num_days_from_ce(), playthrough_id],
+                        )
+                        .map_err(SetWatchStatusError::InsertWatchDate)?;
+                }
+                WatchStatus::Skipped => {
+                    transaction
+                        .execute(
+                            "
+                            INSERT OR IGNORE INTO skipped_episodes(episode_id, playthrough_id)
+                            VALUES (?1, ?2)
+                            ",
+                            params![episode.0, playthrough_id],
+                        )
+                        .map_err(SetWatchStatusError::InsertSkip)?;
+                }
+                WatchStatus::Unwatched => {}
             }
-            WatchStatus::Skipped => {
-                transaction
-                    .execute(
-                        "
-                        INSERT OR IGNORE INTO skipped_episodes(episode_id)
-                        VALUES (?1)
-                        ",
-                        params![episode.0],
-                    )
-                    .map_err(SetWatchStatusError::InsertSkip)?;
-            }
-            WatchStatus::Unwatched => {}
         }
-
         transaction
             .commit()
             .map_err(SetWatchStatusError::CommitTransaction)?;
@@ -748,11 +773,11 @@ impl Db {
                     season: 3,
                     episode: 4,
                     airdate: 5,
-                    watch_date: 6,
-                    skip_state: 7,
                 },
             )?;
 
+            let num_playthroughs = num_playthroughs_for_show(&self.connection, episode.show_id)?;
+            let episode = append_episode_watch_status(&self.connection, episode, num_playthroughs)?;
             ret.insert(episode.id, episode);
         }
 
@@ -1221,6 +1246,59 @@ fn get_movies(
     Ok(ret)
 }
 
+fn append_show_watch_status(
+    connection: &Connection,
+    show: TvShowWithoutWatchStatus,
+) -> Result<TvShow, AppendShowWatchStatusError> {
+    use AppendShowWatchStatusError::*;
+
+    let mut num_watched = Vec::new();
+    let mut num_skipped = Vec::new();
+
+    for (table_name, output_vec) in [
+        ("episode_watch_status", &mut num_watched),
+        ("skipped_episodes", &mut num_skipped),
+    ] {
+        let mut statement = connection.prepare(&format!("SELECT playthrough_id, COUNT(*)  FROM {table_name} WHERE episode_id IN (SELECT id FROM episodes WHERE show_id = ?1) GROUP BY playthrough_id")).map_err(Prepare)?;
+        let mut rows = statement.query([show.id.0]).map_err(Execute)?;
+        while let Some(row) = rows.next().map_err(GetRow)? {
+            let playthrough_id: i64 = row.get(0).map_err(GetPlaythroughId)?;
+            let playthrough_id: usize = playthrough_id.try_into().map_err(InvalidPlaythroughId)?;
+            let count: i64 = row.get(1).map_err(GetCount)?;
+
+            if output_vec.len() <= playthrough_id {
+                output_vec.resize(playthrough_id + 1, 0);
+            }
+            assert!(output_vec[playthrough_id] == 0);
+            output_vec[playthrough_id] = count;
+        }
+    }
+
+    // Make sure all playthroughs are accounted for in both arrays
+    if num_watched.len() < num_skipped.len() {
+        num_watched.resize(num_skipped.len(), 0);
+    }
+
+    if num_skipped.len() < num_watched.len() {
+        num_skipped.resize(num_watched.len(), 0);
+    }
+
+    Ok(TvShow {
+        id: show.id,
+        remote_id: show.remote_id,
+        name: show.name,
+        image: show.image,
+        year: show.year,
+        url: show.url,
+        imdb_id: show.imdb_id,
+        tvdb_id: show.tvdb_id,
+        pause_status: show.pause_status,
+        episodes_watched: num_watched.into_boxed_slice(),
+        episodes_skipped: num_skipped.into_boxed_slice(),
+        episodes_aired: show.episodes_aired,
+        rating_id: show.rating_id,
+    })
+}
 fn get_shows_with_filter(
     connection: &Connection,
     today: &NaiveDate,
@@ -1258,15 +1336,13 @@ fn get_shows_with_filter(
                 url: 5,
                 imdb_id: 6,
                 tvdb_id: 7,
-                episodes_watched: 8,
-                num_episodes: 9,
-                pause_status: 10,
-                rating_id: 11,
-                episodes_skipped: 12,
+                num_episodes: 8,
+                pause_status: 9,
+                rating_id: 10,
             },
         )?;
 
-        ret.push(show);
+        ret.push(append_show_watch_status(connection, show)?);
     }
 
     Ok(ret)
@@ -1279,14 +1355,21 @@ struct EpisodeIndices {
     season: usize,
     episode: usize,
     airdate: usize,
-    watch_date: usize,
-    skip_state: usize,
+}
+
+struct TvEpisodeWithoutWatchStatus {
+    pub id: EpisodeId,
+    pub show_id: ShowId,
+    pub name: String,
+    pub season: i64,
+    pub episode: i64,
+    pub airdate: Option<chrono::NaiveDate>,
 }
 
 fn episode_from_row_indices(
     row: &Row,
     indices: EpisodeIndices,
-) -> Result<TvEpisode, GetEpisodeError> {
+) -> Result<TvEpisodeWithoutWatchStatus, GetEpisodeError> {
     let id = row.get(indices.id).map_err(GetEpisodeError::GetId)?;
     let id = EpisodeId(id);
 
@@ -1314,41 +1397,100 @@ fn episode_from_row_indices(
         None => None,
     };
 
-    let watch_date: Option<i32> = row
-        .get(indices.watch_date)
-        .map_err(GetEpisodeError::GetWatchdate)?;
-    let watch_date = match watch_date {
-        Some(v) => {
-            Some(NaiveDate::from_num_days_from_ce_opt(v).ok_or(GetEpisodeError::InvalidDate)?)
-        }
-        None => None,
-    };
-
-    let skip_status: Option<i64> = row
-        .get(indices.skip_state)
-        .map_err(GetEpisodeError::GetSkipStatus)?;
-
-    let watch_status = match (watch_date, skip_status) {
-        (Some(date), Some(_)) => {
-            warn!(
-                "Episode {} has both skipped and watched set, choosing watched",
-                id.0
-            );
-            WatchStatus::Watched(date)
-        }
-        (Some(date), None) => WatchStatus::Watched(date),
-        (None, Some(_)) => WatchStatus::Skipped,
-        (None, None) => WatchStatus::Unwatched,
-    };
-
-    Ok(TvEpisode {
+    Ok(TvEpisodeWithoutWatchStatus {
         id,
         show_id,
         name,
         season,
         episode,
         airdate,
-        watch_status,
+    })
+}
+
+fn num_playthroughs_for_show(
+    connection: &Connection,
+    show_id: ShowId,
+) -> Result<usize, NumPlaythroughsError> {
+    use NumPlaythroughsError::*;
+
+    let mut max_playthrough_id = 0;
+
+    for table_name in ["episode_watch_status", "skipped_episodes"] {
+        // NOTE: Sketchy string interp for query, but we know we can only insert a number, or a
+        // pre-defined table name. Get off my back, it's fine
+        let query_str = format!("SELECT MAX(playthrough_id) FROM {table_name} WHERE episode_id IN (SELECT id FROM episodes WHERE show_id = {});", show_id.0);
+
+        let mut statement = connection.prepare(&query_str).map_err(Prepare)?;
+
+        let mut rows = statement.query([]).map_err(Execute)?;
+
+        let Some(row) = rows.next().map_err(GetRow)? else {
+            continue;
+        };
+
+        let this_max: Option<usize> = row.get(0).map_err(GetMaxPlaythrough)?;
+        let Some(this_max) = this_max else {
+            continue;
+        };
+        max_playthrough_id = max_playthrough_id.max(this_max);
+    }
+    Ok(max_playthrough_id + 1)
+}
+
+fn append_episode_watch_status(
+    connection: &Connection,
+    episode: TvEpisodeWithoutWatchStatus,
+    num_playthroughs: usize,
+) -> Result<TvEpisode, GetEpisodeError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT watch_date, playthrough_id FROM episode_watch_status WHERE episode_id = ?1",
+        )
+        .map_err(GetEpisodeError::Prepare)?;
+
+    let mut watch_statuses: Vec<WatchStatus> = Vec::new();
+    watch_statuses.resize(num_playthroughs, WatchStatus::Unwatched);
+
+    let mut rows = statement
+        .query([episode.id.0])
+        .map_err(GetEpisodeError::Execute)?;
+
+    while let Ok(Some(row)) = rows.next() {
+        let watch_date = row.get(0).map_err(GetEpisodeError::GetWatchdate)?;
+        let watch_date =
+            NaiveDate::from_num_days_from_ce_opt(watch_date).ok_or(GetEpisodeError::InvalidDate)?;
+        let playthrough_id: usize = row.get(1).map_err(GetEpisodeError::GetPlaythroughId)?;
+        watch_statuses[playthrough_id] = WatchStatus::Watched(watch_date);
+    }
+
+    let mut statement = connection
+        .prepare("SELECT playthrough_id FROM skipped_episodes WHERE episode_id = ?1")
+        .map_err(GetEpisodeError::Prepare)?;
+
+    let mut rows = statement
+        .query([episode.id.0])
+        .map_err(GetEpisodeError::Execute)?;
+
+    while let Ok(Some(row)) = rows.next() {
+        let playthrough_id: usize = row.get(0).map_err(GetEpisodeError::GetPlaythroughId)?;
+        if watch_statuses[playthrough_id] != WatchStatus::Unwatched {
+            warn!(
+                "Episode {} has both skipped and watched set, choosing watched",
+                episode.id.0
+            );
+            continue;
+        }
+        watch_statuses[playthrough_id] = WatchStatus::Skipped;
+    }
+
+    Ok(TvEpisode {
+        id: episode.id,
+        show_id: episode.show_id,
+        name: episode.name,
+        season: episode.season,
+        episode: episode.episode,
+        airdate: episode.airdate,
+        watch_status: watch_statuses.into_boxed_slice(),
     })
 }
 
@@ -1361,14 +1503,29 @@ struct ShowIndices {
     url: usize,
     imdb_id: usize,
     tvdb_id: usize,
-    episodes_watched: usize,
     num_episodes: usize,
     pause_status: usize,
     rating_id: usize,
-    episodes_skipped: usize,
 }
 
-fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetShowError> {
+struct TvShowWithoutWatchStatus {
+    pub id: ShowId,
+    pub remote_id: TvMazeShowId,
+    pub name: String,
+    pub image: Option<ImageId>,
+    pub year: Option<i32>,
+    pub url: Option<String>,
+    pub imdb_id: Option<ImdbShowId>,
+    pub tvdb_id: Option<TvdbShowId>,
+    pub pause_status: bool,
+    pub episodes_aired: i64,
+    pub rating_id: Option<RatingId>,
+}
+
+fn show_from_row_indices(
+    row: &Row,
+    indices: ShowIndices,
+) -> Result<TvShowWithoutWatchStatus, GetShowError> {
     let id = row.get(indices.id).map_err(GetShowError::GetId)?;
     let id = ShowId(id);
 
@@ -1396,11 +1553,6 @@ fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetS
 
     let url = row.get(indices.url).map_err(GetShowError::GetTvMazeUrl)?;
 
-    let episodes_watched: Option<i64> = row
-        .get(indices.episodes_watched)
-        .map_err(GetShowError::GetWatchCount)?;
-    let episodes_watched = episodes_watched.unwrap_or(0);
-
     let episodes_aired: Option<i64> = row
         .get(indices.num_episodes)
         .map_err(GetShowError::GetAiredCount)?;
@@ -1411,12 +1563,7 @@ fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetS
         .map_err(GetShowError::GetPauseStatus)?;
     let pause_status = pause_status.is_some();
 
-    let episodes_skipped: Option<i64> = row
-        .get(indices.episodes_skipped)
-        .map_err(GetShowError::GetSkipCount)?;
-    let episodes_skipped = episodes_skipped.unwrap_or(0);
-
-    Ok(TvShow {
+    Ok(TvShowWithoutWatchStatus {
         id,
         remote_id,
         name,
@@ -1426,8 +1573,6 @@ fn show_from_row_indices(row: &Row, indices: ShowIndices) -> Result<TvShow, GetS
         image,
         url,
         pause_status,
-        episodes_watched,
-        episodes_skipped,
         episodes_aired,
         rating_id,
     })
@@ -1677,6 +1822,47 @@ fn upgrade_v6_v7(connection: &mut Connection) -> Result<(), DbCreationError> {
     Ok(())
 }
 
+fn upgrade_v7_v8(connection: &mut Connection) -> Result<(), DbCreationError> {
+    let transaction = connection
+        .transaction()
+        .map_err(DbCreationError::StartTransaction)?;
+
+    transaction
+        .execute_batch(
+            "
+            CREATE TABLE episode_watch_status_new(
+                episode_id INTEGER NOT NULL,
+                watch_date INTEGER NOT NULL,
+                playthrough_id INTEGER NOT NULL,
+                FOREIGN KEY(episode_id) REFERENCES episodes(id)
+            );
+            INSERT INTO episode_watch_status_new(episode_id, watch_date, playthrough_id)
+            SELECT episode_id, watch_date, 0 FROM episode_watch_status;
+            DROP TABLE episode_watch_status;
+            ALTER TABLE episode_watch_status_new RENAME TO episode_watch_status;
+
+            CREATE TABLE skipped_episodes_new(
+                episode_id INTEGER NOT NULL,
+                playthrough_id INTEGER NOT NULL,
+                FOREIGN KEY(episode_id) REFERENCES episodes(id)
+            );
+            INSERT INTO skipped_episodes_new(episode_id, playthrough_id)
+            SELECT episode_id, 0 FROM skipped_episodes;
+            DROP TABLE skipped_episodes;
+            ALTER TABLE skipped_episodes_new RENAME TO skipped_episodes;
+
+            PRAGMA user_version = 8;
+            ",
+        )
+        .map_err(DbCreationError::AddPlaythroughId)?;
+
+    transaction
+        .commit()
+        .map_err(DbCreationError::CommitTransaction)?;
+
+    Ok(())
+}
+
 fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationError> {
     let version: usize = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -1690,6 +1876,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
         upgrade_v4_v5,
         upgrade_v5_v6,
         upgrade_v6_v7,
+        upgrade_v7_v8,
     ];
 
     for f in upgrade_functions.iter().skip(version) {
@@ -1700,7 +1887,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(DbCreationError::GetVersion)?;
 
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
 
     Ok(())
 }
@@ -1967,29 +2154,149 @@ mod test {
 
         let watch_date = NaiveDate::from_num_days_from_ce_opt(1024).expect("Invalid date");
 
-        db.set_episode_watch_status(&episode_id, &WatchStatus::Watched(watch_date))
+        db.set_episode_watch_status(&episode_id, &[WatchStatus::Watched(watch_date)])
             .expect("Failed to set watch status");
 
         let retrieved_episode = db.get_episode(&episode_id).expect("Failed to get episodes");
 
         assert_eq!(
-            retrieved_episode.watch_status,
-            WatchStatus::Watched(watch_date)
+            &*retrieved_episode.watch_status,
+            &[WatchStatus::Watched(watch_date)]
         );
 
-        db.set_episode_watch_status(&episode_id, &WatchStatus::Skipped)
+        db.set_episode_watch_status(&episode_id, &[WatchStatus::Skipped])
             .expect("Failed to set watch status");
 
         let retrieved_episode = db.get_episode(&episode_id).expect("Failed to get episodes");
 
-        assert_eq!(retrieved_episode.watch_status, WatchStatus::Skipped);
+        assert_eq!(&*retrieved_episode.watch_status, &[WatchStatus::Skipped]);
 
-        db.set_episode_watch_status(&episode_id, &WatchStatus::Unwatched)
+        db.set_episode_watch_status(&episode_id, &[WatchStatus::Unwatched])
             .expect("Failed to set watch status");
 
         let retrieved_episode = db.get_episode(&episode_id).expect("Failed to get episodes");
 
-        assert_eq!(retrieved_episode.watch_status, WatchStatus::Unwatched);
+        assert_eq!(&*retrieved_episode.watch_status, &[WatchStatus::Unwatched]);
+    }
+
+    #[test]
+    fn test_multiple_playthroughs() {
+        let show = generate_empty_show("Test Show", 0);
+
+        let episode = RemoteEpisode {
+            name: "Test Episode".to_string(),
+            season: 1,
+            episode: 34,
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023),
+        };
+
+        let episode2 = RemoteEpisode {
+            name: "Test Episode 2".to_string(),
+            season: 1,
+            episode: 35,
+            airdate: NaiveDate::from_num_days_from_ce_opt(1023),
+        };
+
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+
+        let show_id = db.add_show(&show).expect("Failed to add show");
+
+        let episode_id = db
+            .add_episode(&show_id, &episode)
+            .expect("Failed to add episode");
+
+        let episode_id_2 = db
+            .add_episode(&show_id, &episode2)
+            .expect("Failed to add episode");
+
+        let watch_date = NaiveDate::from_num_days_from_ce_opt(1024).expect("Invalid date");
+
+        db.set_episode_watch_status(
+            &episode_id,
+            &[
+                WatchStatus::Watched(watch_date),
+                WatchStatus::Unwatched,
+                WatchStatus::Skipped,
+            ],
+        )
+        .expect("Failed to set watch status");
+
+        let retrieved_episode = db.get_episode(&episode_id).expect("Failed to get episodes");
+
+        assert_eq!(
+            &*retrieved_episode.watch_status,
+            &[
+                WatchStatus::Watched(watch_date),
+                WatchStatus::Unwatched,
+                WatchStatus::Skipped
+            ]
+        );
+
+        let retrieved_show = db
+            .get_show(&show_id, &watch_date)
+            .expect("Failed to get show");
+        // Watched and skipped count should reflect episode watch status
+        assert_eq!(&*retrieved_show.episodes_watched, &[1, 0, 0]);
+        assert_eq!(&*retrieved_show.episodes_skipped, &[0, 0, 1]);
+
+        let retrieved_episode = db
+            .get_episode(&episode_id_2)
+            .expect("Failed to get episodes");
+        // Second episode should still be tracked for all playthroughs
+        assert_eq!(
+            &*retrieved_episode.watch_status,
+            &[
+                WatchStatus::Unwatched,
+                WatchStatus::Unwatched,
+                WatchStatus::Unwatched
+            ]
+        );
+
+        // Replacing the first element shouldn't change the number of playthroughs
+        db.set_episode_watch_status(
+            &episode_id,
+            &[
+                WatchStatus::Unwatched,
+                WatchStatus::Unwatched,
+                WatchStatus::Skipped,
+            ],
+        )
+        .expect("Failed to set watch status");
+
+        let retrieved_episode = db.get_episode(&episode_id).expect("Failed to get episodes");
+
+        assert_eq!(
+            &*retrieved_episode.watch_status,
+            &[
+                WatchStatus::Unwatched,
+                WatchStatus::Unwatched,
+                WatchStatus::Skipped
+            ]
+        );
+
+        db.set_episode_watch_status(
+            &episode_id,
+            &[
+                WatchStatus::Unwatched,
+                WatchStatus::Unwatched,
+                WatchStatus::Unwatched,
+            ],
+        )
+        .expect("Failed to set watch status");
+
+        let retrieved_episode = db.get_episode(&episode_id).expect("Failed to get episodes");
+
+        // After all elements have been removed, we should be back to our first playthrough
+        assert_eq!(&*retrieved_episode.watch_status, &[WatchStatus::Unwatched]);
+
+        let retrieved_show = db
+            .get_show(&show_id, &watch_date)
+            .expect("Failed to get show");
+
+        const EMPTY: &[i64] = &[];
+        // No playthroughs have been started now
+        assert_eq!(&*retrieved_show.episodes_watched, EMPTY,);
+        assert_eq!(&*retrieved_show.episodes_skipped, EMPTY,);
     }
 
     #[test]
@@ -2056,7 +2363,7 @@ mod test {
 
         let watch_date = NaiveDate::from_num_days_from_ce_opt(1024).expect("Invalid date");
 
-        db.set_episode_watch_status(&episode_id, &WatchStatus::Watched(watch_date))
+        db.set_episode_watch_status(&episode_id, &[WatchStatus::Watched(watch_date)])
             .expect("Failed to set watch status");
 
         let episodes = db

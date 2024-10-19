@@ -331,7 +331,7 @@ impl App {
     pub fn set_watch_status(
         &self,
         episode: &EpisodeId,
-        status: &WatchStatus,
+        status: &[WatchStatus],
     ) -> Result<TvEpisode, SetWatchStatusError> {
         let mut db = self.inner.db.lock().expect("Poisoned lock");
         db.set_episode_watch_status(episode, status)?;

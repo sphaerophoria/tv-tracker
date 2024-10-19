@@ -134,7 +134,7 @@ async fn get_episode(req: tide::Request<App>) -> tide::Result<serde_json::Value>
 #[derive(Debug, Deserialize)]
 struct PutEpisodeRequest {
     id: EpisodeId,
-    watch_status: WatchStatus,
+    watch_status: Box<[WatchStatus]>,
 }
 
 async fn put_episode(mut req: tide::Request<App>) -> tide::Result<serde_json::Value> {

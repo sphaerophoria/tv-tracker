@@ -30,8 +30,8 @@ pub struct TvShow {
     pub imdb_id: Option<ImdbShowId>,
     pub tvdb_id: Option<TvdbShowId>,
     pub pause_status: bool,
-    pub episodes_watched: i64,
-    pub episodes_skipped: i64,
+    pub episodes_watched: Box<[i64]>,
+    pub episodes_skipped: Box<[i64]>,
     pub episodes_aired: i64,
     pub rating_id: Option<RatingId>,
 }
@@ -73,7 +73,7 @@ pub struct TvEpisode {
     pub season: i64,
     pub episode: i64,
     pub airdate: Option<chrono::NaiveDate>,
-    pub watch_status: WatchStatus,
+    pub watch_status: Box<[WatchStatus]>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
