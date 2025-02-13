@@ -8,7 +8,7 @@ eslint $(find "$LINT_DIR"/res -iname "*.js")
 
 PYTHON_FILES=$(git ls-files | grep "\.py$")
 black --check $PYTHON_FILES
-ruff $PYTHON_FILES
+ruff check $PYTHON_FILES
 
 ALL_FILES=$(git ls-files | grep -v ^lint.sh$)
 if grep -q FIXME $ALL_FILES; then
