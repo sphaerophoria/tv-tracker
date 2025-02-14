@@ -258,6 +258,7 @@ class ShowPage {
         }
 
         const link = document.createElement("div");
+        link.id = "episode-" + episode_id;
         link.classList.add(aired_class);
         link.classList.add(watched_class);
 
