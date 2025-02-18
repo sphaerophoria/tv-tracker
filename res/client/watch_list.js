@@ -284,12 +284,21 @@ async function init() {
     ratings_promise,
   ]);
   const show_page = new WatchItemPage(watch_items, ratings, page_mode);
-  show_page.render();
 
   let sort_style_selector = document.getElementById("sort-style");
-  sort_style_selector.onchange = () => {
+  const localstorage_key = document.location + "sort-style";
+  const previous_value = window.localStorage.getItem(localstorage_key);
+
+  if (previous_value !== null) {
+    sort_style_selector.value = previous_value;
+  }
+
+  sort_style_selector.onchange = (ev) => {
+    window.localStorage.setItem(localstorage_key, ev.target.value);
     show_page.render();
   };
+
+  show_page.render();
 }
 
 init();
