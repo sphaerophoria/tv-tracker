@@ -31,8 +31,6 @@ enum ArgParseError {
     NoDbPath,
     #[error("No cache path provided")]
     NoCachePath,
-    #[error("No omdb api key provided")]
-    NoOmdbApiKeyProvided,
 }
 
 struct Args {
@@ -40,7 +38,7 @@ struct Args {
     port: i16,
     db_path: PathBuf,
     cache_path: PathBuf,
-    omdb_key_path: PathBuf,
+    omdb_key_path: Option<PathBuf>,
     poll_indexers: bool,
 }
 
@@ -90,7 +88,6 @@ impl Args {
             .map_err(ArgParseError::InvalidPort)?;
         let db_path = db_path.ok_or(ArgParseError::NoDbPath)?;
         let cache_path = cache_path.ok_or(ArgParseError::NoCachePath)?;
-        let omdb_key_path = omdb_key_path.ok_or(ArgParseError::NoOmdbApiKeyProvided)?;
 
         let ret = Args {
             html_path,
@@ -141,8 +138,11 @@ fn main() {
         }
     };
 
-    let omdb_key = std::fs::read_to_string(args.omdb_key_path).expect("Failed to read omdb key");
-    let omdb_indexer = OmdbIndexer::new(omdb_key.trim().to_string());
+    let mut omdb_indexer = None;
+    if let Some(omdb_key_path) = &args.omdb_key_path {
+        let omdb_key = std::fs::read_to_string(omdb_key_path).expect("Failed to read omdb key");
+        omdb_indexer = Some(OmdbIndexer::new(omdb_key.trim().to_string()));
+    }
     let db = Db::new(&args.db_path).expect("Failed to create db");
     let poster_cache = ImageCache::new(args.cache_path.join("posters"));
     let app = App::new(db, omdb_indexer, poster_cache, args.poll_indexers);

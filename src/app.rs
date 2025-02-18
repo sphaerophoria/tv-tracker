@@ -96,6 +96,8 @@ pub enum GetImageError {
 
 #[derive(Debug, Error)]
 pub enum AddMovieError {
+    #[error("No movie indexer available")]
+    NoIndexer,
     #[error("failed to get movie info from remote")]
     Remote(#[source] OmdbError),
     #[error("failed add movie to databse")]
@@ -160,7 +162,10 @@ impl IndexPoller {
         };
 
         for movie in movies {
-            let omdb_movie = self.inner.omdb_indexer.get_by_id(&movie.imdb_id);
+            let Some(omdb_indexer) = &self.inner.omdb_indexer else {
+                break;
+            };
+            let omdb_movie = omdb_indexer.get_by_id(&movie.imdb_id);
             let omdb_movie = match omdb_movie {
                 Ok(v) => v,
                 Err(e) => {
@@ -225,7 +230,7 @@ pub enum SearchError {
 pub struct Inner {
     db: Mutex<Db>,
     image_cache: ImageCache,
-    omdb_indexer: OmdbIndexer,
+    omdb_indexer: Option<OmdbIndexer>,
 }
 
 type SharedInner = Arc<Inner>;
@@ -238,7 +243,7 @@ pub struct App {
 impl App {
     pub fn new(
         db: Db,
-        omdb_indexer: OmdbIndexer,
+        omdb_indexer: Option<OmdbIndexer>,
         image_cache: ImageCache,
         poll_indexers: bool,
     ) -> App {
@@ -320,10 +325,13 @@ impl App {
             Default::default()
         });
 
-        let movies = self.inner.omdb_indexer.search(query).unwrap_or_else(|e| {
-            error!("Failed to execute movie search: {e}");
-            Default::default()
-        });
+        let mut movies = Default::default();
+        if let Some(omdb_indexer) = &self.inner.omdb_indexer {
+            movies = omdb_indexer.search(query).unwrap_or_else(|e| {
+                error!("Failed to execute movie search: {e}");
+                Default::default()
+            });
+        }
 
         Ok(SearchResults { movies, shows })
     }
@@ -394,9 +402,11 @@ impl App {
 
     pub fn add_movie(&self, imdb_id: &str) -> Result<Movie, AddMovieError> {
         let mut db = self.inner.db.lock().expect("Poisoned lock");
-        let movie = self
-            .inner
-            .omdb_indexer
+        let Some(omdb_indexer) = &self.inner.omdb_indexer else {
+            return Err(AddMovieError::NoIndexer);
+        };
+
+        let movie = omdb_indexer
             .get_by_id(imdb_id)
             .map_err(AddMovieError::Remote)?;
 
