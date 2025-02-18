@@ -76,11 +76,12 @@ class ShowPage {
       "multi-playthough-selector",
     );
 
+    const num_playthroughs = Math.max(this.show.episodes_watched.length, 1);
     // NOTE: This means if we try to start two playthroughs back to back we
     // have to refresh the page. Not ideal, but in practice not a problem
-    playthrough_input.max = this.show.episodes_watched.length + 1;
+    playthrough_input.max = num_playthroughs + 1;
 
-    playthrough_input.value = this.show.episodes_watched.length;
+    playthrough_input.value = num_playthroughs;
     this.playthrough = Number(playthrough_input.value) - 1;
     playthrough_input.oninput = (ev) => {
       this.playthrough = Number(ev.target.value) - 1;
