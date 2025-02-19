@@ -55,6 +55,33 @@ function append_to_watch_statuses(episodes) {
   }
 }
 
+function append_unwatched_button(div) {
+  const unwatched_button = document.createElement("input");
+  unwatched_button.type = "image";
+  unwatched_button.src = "img/unwatched.png";
+  unwatched_button.classList.add("watched_button");
+  div.appendChild(unwatched_button);
+  return unwatched_button;
+}
+
+function append_skipped_button(div) {
+  const skipped_button = document.createElement("input");
+  skipped_button.type = "image";
+  skipped_button.src = "img/skip_episode.png";
+  skipped_button.classList.add("watched_button");
+  div.appendChild(skipped_button);
+  return skipped_button;
+}
+
+function append_watched_button(div) {
+  const watched_button = document.createElement("input");
+  watched_button.type = "image";
+  watched_button.src = "img/watched.png";
+  watched_button.classList.add("watched_button");
+  div.appendChild(watched_button);
+  return watched_button;
+}
+
 class ShowPage {
   constructor(show, episodes, ratings) {
     this.show = show;
@@ -213,9 +240,49 @@ class ShowPage {
     });
 
     for (const [season, episodes] of season_episodes) {
+      const season_div = document.createElement("div");
+      season_div.classList.add("season_holder");
+
+      const season_buttons = document.createElement("div");
+      season_buttons.classList.add("season_buttons");
+
       const season_header = document.createElement("h2");
       season_header.innerHTML = "Season " + season;
-      div.appendChild(season_header);
+      season_div.appendChild(season_header);
+
+      const season_unwatched = append_unwatched_button(season_buttons);
+      season_unwatched.onclick = () => {
+        for (let [episode_id, episode] of episodes) {
+          this.set_episode_unwatched(episode_id);
+        }
+      };
+
+      const season_skipped = append_skipped_button(season_buttons);
+      season_skipped.onclick = () => {
+        for (let [episode_id, episode] of episodes) {
+          this.set_episode_skipped(episode_id);
+        }
+      };
+
+      const season_watched = append_watched_button(season_buttons);
+      season_watched.onclick = () => {
+        for (let [episode_id, episode] of episodes) {
+          this.set_episode_watched(episode_id);
+        }
+      };
+      season_div.appendChild(season_buttons);
+
+      for (let button of [season_unwatched, season_skipped, season_watched]) {
+        button.onmouseenter = (ev) => {
+          ev.target.classList.add("active");
+        };
+
+        button.onmouseleave = (ev) => {
+          ev.target.classList.remove("active");
+        };
+      }
+      div.appendChild(season_div);
+
       for (let [episode_id, episode] of episodes) {
         let aired_class = "unaired";
         if (episode.airdate !== null && Date.parse(episode.airdate) < today) {
@@ -225,26 +292,14 @@ class ShowPage {
         const episode_holder = document.createElement("div");
         episode_holder.classList.add("episode_holder");
 
-        const unwatched_button = document.createElement("input");
-        unwatched_button.type = "image";
-        unwatched_button.src = "img/unwatched.png";
-        unwatched_button.classList.add("watched_button");
-        episode_holder.appendChild(unwatched_button);
+        const unwatched_button = append_unwatched_button(episode_holder);
         unwatched_button.onclick = () => this.set_episode_unwatched(episode.id);
 
-        const skipped_button = document.createElement("input");
-        skipped_button.type = "image";
-        skipped_button.src = "img/skip_episode.png";
-        skipped_button.classList.add("watched_button");
+        const skipped_button = append_skipped_button(episode_holder);
         skipped_button.onclick = () => this.set_episode_skipped(episode.id);
-        episode_holder.appendChild(skipped_button);
 
-        const watched_button = document.createElement("input");
-        watched_button.type = "image";
-        watched_button.src = "img/watched.png";
-        watched_button.classList.add("watched_button");
+        const watched_button = append_watched_button(episode_holder);
         watched_button.onclick = () => this.set_episode_watched(episode.id);
-        episode_holder.appendChild(watched_button);
 
         let watched_class = "unknown";
         if (episode.watch_status[this.playthrough].Watched != null) {

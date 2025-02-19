@@ -50,3 +50,22 @@
 .episode_holder {
   display: flex;
 }
+
+
+.season_holder {
+  display: flex;
+  align-items: center;
+  margin-top: 12px;
+  margin-bottom: 24px;
+}
+
+.season_holder * {
+  margin-right: 10px;
+  margin-top: 0px;
+  margin-bottom: 0px;
+}
+
+.season_buttons {
+  display: flex;
+}
+
