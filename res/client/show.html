@@ -28,18 +28,26 @@
           <input id="remove-show" type="button" value="Remove show" />
         </div>
         <a id="youtube-link"><img id="youtube-img" src="img/youtube.svg" /></a>
-        <br />
-        <div id="multi-playthrough">
-          <label for="multi-playthrough-selector">Playthrough</label>
-          <input
-            id="multi-playthough-selector"
-            type="number"
-            value="1"
-            max="1"
-            min="1"
-          />
+        <div class="secondary-watch-options">
+          <div id="multi-playthrough">
+            <label for="multi-playthrough-selector">Playthrough</label>
+            <input
+              id="multi-playthough-selector"
+              type="number"
+              value="1"
+              max="1"
+              min="1"
+            />
+          </div>
+          <div id="ratings"></div>
         </div>
-        <div id="ratings"></div>
+      </div>
+    </div>
+    <div>
+      <h2>Notes</h2>
+      <div id="notes-content">
+        <textarea id="notes-text-area"> </textarea>
+        <button id="save-notes">Save</button>
       </div>
     </div>
     <div id="show-seasons"></div>

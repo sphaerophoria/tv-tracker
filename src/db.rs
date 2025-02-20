@@ -38,6 +38,8 @@ pub enum DbCreationError {
     CreateSkippedEpisodes(#[source] rusqlite::Error),
     #[error("failed to add playthrough ID to watch status")]
     AddPlaythroughId(#[source] rusqlite::Error),
+    #[error("failed to add notes table")]
+    AddNotesTable(#[source] rusqlite::Error),
 }
 
 #[derive(Debug, Error)]
@@ -98,6 +100,8 @@ pub enum GetShowError {
     GetTvMazeUrl(#[source] rusqlite::Error),
     #[error("failed to get pause status")]
     GetPauseStatus(#[source] rusqlite::Error),
+    #[error("failed to get show notes")]
+    GetNotes(#[source] rusqlite::Error),
     #[error("failed to get aired count")]
     GetAiredCount(#[source] rusqlite::Error),
     #[error("incorrect number of elements returned")]
@@ -215,7 +219,7 @@ pub struct SetPauseError(#[source] rusqlite::Error);
 
 const GET_SHOWS_QUERY: &str =
     "
-    SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_id, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, epi_count.count, paused_shows.show_id, show_ratings.rating_id FROM shows
+    SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_id, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, epi_count.count, paused_shows.show_id, show_ratings.rating_id, notes.content FROM shows
     LEFT JOIN
         (
             SELECT show_id, COUNT(*) as count FROM episodes
@@ -226,6 +230,7 @@ const GET_SHOWS_QUERY: &str =
         ON shows.id = epi_count.show_id
     LEFT JOIN paused_shows ON shows.id = paused_shows.show_id
     LEFT JOIN show_ratings ON shows.id = show_ratings.show_id
+    LEFT JOIN notes ON shows.id = notes.show_id
     ";
 
 #[derive(Debug, Error)]
@@ -277,6 +282,10 @@ pub enum DeleteRatingError {
 #[derive(Debug, Error)]
 #[error("failed to set show rating")]
 pub struct SetShowRatingError(#[source] rusqlite::Error);
+
+#[derive(Debug, Error)]
+#[error("failed to set show notes")]
+pub struct SetShowNotesError(#[source] rusqlite::Error);
 
 #[derive(Debug, Error)]
 pub enum GetImageUrlError {
@@ -492,6 +501,7 @@ impl Db {
                     num_episodes: 8,
                     pause_status: 9,
                     rating_id: 10,
+                    notes: 11,
                 },
             )?;
 
@@ -950,6 +960,20 @@ impl Db {
         Ok(())
     }
 
+    pub fn set_show_notes(&self, show_id: ShowId, notes: &str) -> Result<(), SetShowNotesError> {
+        self.connection
+            .execute(
+                "
+                INSERT INTO notes(show_id, content)
+                VALUES (?1, ?2)
+                ON CONFLICT(show_id) DO UPDATE SET content = ?2
+                ",
+                params![show_id.0, notes],
+            )
+            .map_err(SetShowNotesError)?;
+        Ok(())
+    }
+
     pub fn get_image_url(&self, image_id: &ImageId) -> Result<String, GetImageUrlError> {
         let mut statement = self
             .connection
@@ -1297,6 +1321,7 @@ fn append_show_watch_status(
         episodes_skipped: num_skipped.into_boxed_slice(),
         episodes_aired: show.episodes_aired,
         rating_id: show.rating_id,
+        notes: show.notes,
     })
 }
 fn get_shows_with_filter(
@@ -1339,6 +1364,7 @@ fn get_shows_with_filter(
                 num_episodes: 8,
                 pause_status: 9,
                 rating_id: 10,
+                notes: 11,
             },
         )?;
 
@@ -1506,6 +1532,7 @@ struct ShowIndices {
     num_episodes: usize,
     pause_status: usize,
     rating_id: usize,
+    notes: usize,
 }
 
 struct TvShowWithoutWatchStatus {
@@ -1520,6 +1547,7 @@ struct TvShowWithoutWatchStatus {
     pub pause_status: bool,
     pub episodes_aired: i64,
     pub rating_id: Option<RatingId>,
+    pub notes: Option<String>,
 }
 
 fn show_from_row_indices(
@@ -1563,6 +1591,8 @@ fn show_from_row_indices(
         .map_err(GetShowError::GetPauseStatus)?;
     let pause_status = pause_status.is_some();
 
+    let notes: Option<String> = row.get(indices.notes).map_err(GetShowError::GetNotes)?;
+
     Ok(TvShowWithoutWatchStatus {
         id,
         remote_id,
@@ -1575,6 +1605,7 @@ fn show_from_row_indices(
         pause_status,
         episodes_aired,
         rating_id,
+        notes,
     })
 }
 
@@ -1863,6 +1894,32 @@ fn upgrade_v7_v8(connection: &mut Connection) -> Result<(), DbCreationError> {
     Ok(())
 }
 
+fn upgrade_v8_v9(connection: &mut Connection) -> Result<(), DbCreationError> {
+    let transaction = connection
+        .transaction()
+        .map_err(DbCreationError::StartTransaction)?;
+
+    transaction
+        .execute_batch(
+            "
+            CREATE TABLE notes(
+                show_id INTEGER PRIMARY KEY NOT NULL,
+                content TEXT NOT NULL,
+                FOREIGN KEY(show_id) REFERENCES shows(id)
+            );
+
+            PRAGMA user_version = 9;
+            ",
+        )
+        .map_err(DbCreationError::AddNotesTable)?;
+
+    transaction
+        .commit()
+        .map_err(DbCreationError::CommitTransaction)?;
+
+    Ok(())
+}
+
 fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationError> {
     let version: usize = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -1877,6 +1934,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
         upgrade_v5_v6,
         upgrade_v6_v7,
         upgrade_v7_v8,
+        upgrade_v8_v9,
     ];
 
     for f in upgrade_functions.iter().skip(version) {
@@ -1887,7 +1945,7 @@ fn initialize_connection(connection: &mut Connection) -> Result<(), DbCreationEr
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(DbCreationError::GetVersion)?;
 
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
 
     Ok(())
 }
@@ -2644,5 +2702,29 @@ mod test {
         assert!(db.get_movie(&movie_id).is_err());
         assert!(db.get_image_url(&inserted_movie.image).is_err());
         assert_eq!(db.get_movies().expect("failed to get movies").len(), 0);
+    }
+
+    #[test]
+    fn test_show_notes() {
+        let show = generate_empty_show("Test Show", 0);
+        let mut db = Db::new_in_memory().expect("Failed to create db");
+        let show_id = db.add_show(&show).expect("Failed to add show 1");
+
+        {
+            let show = db
+                .get_show(&show_id, &gen_date(1234))
+                .expect("Failed to get show");
+            assert_eq!(show.notes, None);
+        }
+
+        db.set_show_notes(show_id, "These are my notes")
+            .expect("Failed to set notes");
+
+        {
+            let show = db
+                .get_show(&show_id, &gen_date(1234))
+                .expect("Failed to get show");
+            assert_eq!(show.notes.as_deref(), Some("These are my notes"));
+        }
     }
 }

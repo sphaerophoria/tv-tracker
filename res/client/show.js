@@ -103,6 +103,13 @@ class ShowPage {
       "multi-playthough-selector",
     );
 
+    this.notes_text_area = document.getElementById("notes-text-area");
+
+    const notes_save = document.getElementById("save-notes");
+    notes_save.onclick = () => {
+      this.save_notes();
+    };
+
     const num_playthroughs = Math.max(this.show.episodes_watched.length, 1);
     // NOTE: This means if we try to start two playthroughs back to back we
     // have to refresh the page. Not ideal, but in practice not a problem
@@ -181,6 +188,13 @@ class ShowPage {
     this.render_show();
   }
 
+  async save_notes() {
+    let new_show = window.structuredClone(this.show);
+    new_show.notes = this.notes_text_area.value;
+    await this.put_show(new_show);
+    this.render_show();
+  }
+
   async put_show(show) {
     let response = await put_show(show);
     this.show = response;
@@ -238,6 +252,8 @@ class ShowPage {
       new_show.rating_id = rating_id;
       this.put_show(new_show);
     });
+
+    this.notes_text_area.value = this.show.notes;
 
     for (const [season, episodes] of season_episodes) {
       const season_div = document.createElement("div");

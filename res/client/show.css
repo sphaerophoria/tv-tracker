@@ -69,3 +69,13 @@
   display: flex;
 }
 
+.secondary-watch-options {
+  display: flex;
+  gap: 30px;
+}
+
+#notes-content textarea {
+  font-family: monospace;
+  /* my monospace font was smaller than normal */
+  font-size: 1.0rem;
+}

@@ -22,7 +22,6 @@ export function create_ratings_selector(item, ratings, parent, onchange) {
   }
 
   ratings_selector.onchange = onchange;
-  console.log(ratings_selector);
 
   parent.appendChild(label);
   parent.appendChild(ratings_selector);
