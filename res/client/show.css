@@ -44,13 +44,21 @@
 }
 
 .watched_button.active {
-  filter: invert(0%);
+  filter: unset;
+}
+
+@media (prefers-color-scheme: dark) {
+  .watched_button {
+    filter: unset;
+  }
+  .watched_button.active {
+    filter: invert(80%);
+  }
 }
 
 .episode_holder {
   display: flex;
 }
-
 
 .season_holder {
   display: flex;
