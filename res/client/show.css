@@ -69,3 +69,13 @@
   display: flex;
 }
 
+.secondary-watch-options {
+  display: flex;
+  gap: 30px;
+}
+
+#notes-content textarea {
+  font-family: monospace;
+  /* FIXME: Why TF do I need this */
+  font-size: 1.0rem;
+}

@@ -42,6 +42,8 @@ pub enum UpdateShowError {
     SetPause(#[from] db::SetPauseError),
     #[error("failed to set rating in db")]
     SetRating(#[from] db::SetShowRatingError),
+    #[error("failed to set show notes in db")]
+    SetShowNotes(#[from] db::SetShowNotesError),
     #[error("failed to get shows after modification")]
     GetShows(#[from] db::GetShowError),
 }
@@ -353,6 +355,10 @@ impl App {
         }
 
         db.set_show_rating(&show.id, &show.rating_id)?;
+
+        if let Some(notes) = &show.notes {
+            db.set_show_notes(show.id, notes)?;
+        }
 
         Ok(db.get_show(&show.id, &today())?)
     }

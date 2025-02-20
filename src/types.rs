@@ -34,13 +34,16 @@ pub struct TvShow {
     pub episodes_skipped: Box<[i64]>,
     pub episodes_aired: i64,
     pub rating_id: Option<RatingId>,
+    pub notes: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct TvShowUpdate {
     pub id: ShowId,
     pub pause_status: Option<bool>,
+    // FIXME: Null deletes rating which seems absurd when the other ones don't
     pub rating_id: Option<RatingId>,
+    pub notes: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
