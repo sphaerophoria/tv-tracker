@@ -75,7 +75,7 @@ function all_episodes_watched_or_skipped_in_all_playthroughs(show) {
 
   return (
     sum_all_elems(show.episodes_watched) +
-      sum_all_elems(show.episodes_skipped) ==
+      sum_all_elems(show.episodes_skipped) >=
     show.episodes_aired * show.episodes_watched.length
   );
 }

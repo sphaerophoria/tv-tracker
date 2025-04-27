@@ -299,10 +299,14 @@ class ShowPage {
       }
       div.appendChild(season_div);
 
+      const tz_offs = new Date().getTimezoneOffset() * 60 * 1000;
       for (let [episode_id, episode] of episodes) {
         let aired_class = "unaired";
-        if (episode.airdate !== null && Date.parse(episode.airdate) < today) {
-          aired_class = "aired";
+        if (episode.airdate !== null) {
+          const airdate_parsed = Date.parse(episode.airdate) + tz_offs;
+          if (airdate_parsed < today) {
+            aired_class = "aired";
+          }
         }
 
         const episode_holder = document.createElement("div");
