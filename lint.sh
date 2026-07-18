@@ -10,13 +10,13 @@ PYTHON_FILES=$(git ls-files | grep "\.py$")
 black --check $PYTHON_FILES
 ruff check $PYTHON_FILES
 
-ALL_FILES=$(git ls-files | grep -v ^lint.sh$)
+ALL_FILES=$(git ls-files | grep -v ^lint.sh$ | grep -v ^sphtud | grep -v ^sqlite)
 if grep -q FIXME $ALL_FILES; then
-	echo "FIXMEs remain"
-	exit 1
+       echo "FIXMEs remain"
+       exit 1
 fi
 
-cargo fmt --check
-cargo clippy -- -D warnings
-cargo test
+zig fmt src build.zig --check
+zig build
+./zig-out/bin/test
 
