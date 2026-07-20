@@ -40,7 +40,7 @@ async function handle_add_movie(item) {
   const request = new Request("movies", {
     method: "PUT",
     body: JSON.stringify({
-      imdb_id: item,
+      wikipedia_page_id: item,
     }),
   });
   fetch(request);
@@ -50,6 +50,9 @@ function render_watch_item(item, parent, onclick) {
   let href = null;
   if (item.imdb_id !== null && item.imdb_id !== undefined) {
     href = "https://www.imdb.com/title/" + item.imdb_id;
+  } else if (item.wikipedia_page_id) {
+    href =
+      "https://en.wikipedia.org/w/index.php?curid=" + item.wikipedia_page_id;
   } else if (item.url !== undefined) {
     href = item.url;
   }
@@ -89,7 +92,7 @@ async function execute_search() {
   for (const i in response_body.movies) {
     const item = response_body.movies[i];
     render_watch_item(item, movie_search_results, () =>
-      handle_add_movie(item.imdb_id),
+      handle_add_movie(item.wikipedia_page_id),
     );
   }
 }

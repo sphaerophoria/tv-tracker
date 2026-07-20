@@ -121,7 +121,6 @@ const Args = struct {
             \\--html-path: Optional path to filesystem to serve html files from. Useful for debugging
             \\--db-path: Where to store database
             \\--port: Port to serve UI on
-            \\--omdb-key-path: Path to file containing omdb api key
             \\--no-poll: Optional, when passed will not poll remote indexers for new data
             \\
         , .{process_name});
@@ -181,6 +180,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
         .read = true,
         .write = false,
     });
+
+    std.log.info("Server running at http://0.0.0.0:{d}", .{args.port});
 
     while (true) {
         const event = try io.service(ids.runtime);

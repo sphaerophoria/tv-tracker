@@ -5,6 +5,8 @@ const Db = @import("Db.zig");
 const ImageCache = @import("ImageCache.zig");
 const tv_maze = @import("tv_maze.zig");
 const types = @import("types.zig");
+const wikipedia = @import("wikipedia.zig");
+const RemoteSearch = @import("RemoteSearch.zig");
 
 alloc: *sphtud.alloc.Sphalloc,
 pool: sphtud.util.ObjectPool(Connection, usize),
@@ -22,11 +24,13 @@ pub const Ids = struct {
     connection: sphtud.util.IdAlloc.Range,
     total: sphtud.util.IdAlloc.Range,
 
+    const connection_concurrency = 9;
+
     pub fn init(alloc: *sphtud.util.IdAlloc) Ids {
         const start = alloc.mark();
         return .{
             .accept = alloc.allocOne(),
-            .connection = alloc.allocMany(1024),
+            .connection = alloc.allocMany(1024 * connection_concurrency),
             .total = start.range(),
         };
     }
@@ -56,7 +60,7 @@ pub fn init(parent_alloc: *sphtud.alloc.Sphalloc, port: u16, resource_dir: c_int
             alloc.arena(),
             alloc.expansion(),
             8,
-            (ids.connection.end - ids.connection.start + 1),
+            (ids.connection.end - ids.connection.start + 1) / Ids.connection_concurrency,
         ),
         .loop = loop,
         .db = db,
@@ -92,7 +96,7 @@ pub fn service(self: *Server, id: usize, comptime ids: Ids) !void {
                 errdefer self.pool.release(expansion_alloc, conn.handle);
 
                 try self.loop.register(.{
-                    .id = ids.connection.start + conn.handle,
+                    .id = ids.connection.start + conn.handle * Ids.connection_concurrency,
                     .handle = conn_fd,
                     .read = true,
                     .write = true,
@@ -109,19 +113,22 @@ pub fn service(self: *Server, id: usize, comptime ids: Ids) !void {
                     .writer = .init(conn_fd, &conn.val.writer_buf),
                     .body = .empty,
                     .state = .recv_head,
-                    .service_id = ids.connection.start + conn.handle,
+                    .base_id = ids.connection.start + conn.handle * Ids.connection_concurrency,
                 };
             }
         },
         ids.connection.start...ids.connection.end => {
-            const conn_id = id - ids.connection.start;
+            const conn_id = (id - ids.connection.start) / Ids.connection_concurrency;
             const conn = self.pool.get(conn_id);
-            switch (conn.poll(self)) {
+            switch (conn.poll(self, id)) {
                 .wait => {},
                 .finish => {
+                    const base_id = conn.base_id;
                     conn.deinit();
                     self.pool.release(self.alloc.expansion(), conn_id);
-                    self.loop.clearEvents(id);
+                    for (base_id..base_id + Ids.connection_concurrency) |i| {
+                        self.loop.clearEvents(i);
+                    }
                 },
             }
         },
@@ -140,7 +147,7 @@ pub const Connection = struct {
     writer: sphtud.io.Writer,
     body_buf: [4096]u8,
     http_reader: sphtud.http.HttpRequestReader,
-    service_id: usize,
+    base_id: usize,
 
     body: std.ArrayList(u8),
 
@@ -156,7 +163,7 @@ pub const Connection = struct {
 
             // Type erased response data. Types are resolved according to which target
             // is being processed
-            extra_data: [2]?*anyopaque,
+            extra_data: ?*anyopaque,
         },
         respond: struct {
             req: sphtud.http.HttpRequestHeader,
@@ -175,18 +182,24 @@ pub const Connection = struct {
             .handle => |hp| blk: {
                 switch (hp.target) {
                     .get_image => {
-                        const getter: *ImageCache.Get = @ptrCast(@alignCast((hp.extra_data[0] orelse break :blk)));
+                        const getter: *ImageCache.Get = @ptrCast(@alignCast((hp.extra_data orelse break :blk)));
                         getter.cancel();
                     },
                     .search => {
-                        const retriever: *tv_maze.Search = @ptrCast(@alignCast((hp.extra_data[0] orelse break :blk)));
-                        retriever.deinit();
+                        const searcher: *RemoteSearch = @ptrCast(@alignCast((hp.extra_data orelse break :blk)));
+                        searcher.deinit();
                     },
                     .put_shows => {
-                        const retriever: *tv_maze.ShowMeta = @ptrCast(@alignCast((hp.extra_data[0] orelse break :blk)));
+                        const retriever: *tv_maze.ShowMeta = @ptrCast(@alignCast((hp.extra_data orelse break :blk)));
                         retriever.deinit();
                     },
-                    else => {},
+                    .put_movies => {
+                        const resolver: *wikipedia.RemoteMovieResolver = @ptrCast(@alignCast((hp.extra_data orelse break :blk)));
+                        resolver.deinit();
+                    },
+                    else => {
+                        std.debug.assert(hp.extra_data == null);
+                    },
                 }
             },
             else => {},
@@ -198,10 +211,10 @@ pub const Connection = struct {
         finish,
     };
 
-    pub fn poll(self: *Connection, server: *Server) PollRes {
+    pub fn poll(self: *Connection, server: *Server, event_id: usize) PollRes {
         self.reader.err = null;
 
-        return self.tryPoll(server) catch |e| {
+        return self.tryPoll(server, event_id) catch |e| {
             if (self.reader.isWouldBlock(e)) return .wait;
             if (e == error.EndOfStream) {
                 return .finish;
@@ -215,7 +228,7 @@ pub const Connection = struct {
         };
     }
 
-    fn tryPoll(self: *Connection, server: *Server) !PollRes {
+    fn tryPoll(self: *Connection, server: *Server, event_id: usize) !PollRes {
         sw: switch (self.state) {
             .recv_head => {
                 const res = try self.http_reader.poll(self.alloc.arena(), &self.body_buf);
@@ -236,11 +249,16 @@ pub const Connection = struct {
 
                 const target_s = r.req.target;
                 const target = Target.parse(r.req.method, target_s);
-                self.state = .{ .handle = .{ .req = r.req, .target = target, .extra_data = @splat(null) } };
+                self.state = .{ .handle = .{ .req = r.req, .target = target, .extra_data = null } };
                 continue :sw self.state;
             },
             .handle => |*params| {
-                const msg = try self.handleRequest(server, params.target, &params.extra_data) orelse return .wait;
+                const msg = if (self.handleRequest(server, params.target, &params.extra_data, event_id)) |msg| msg orelse return .wait else |e| msg: {
+                    std.log.err("Failed to handle {s}: {t}", .{ params.req.target, e });
+                    break :msg response_500;
+                };
+
+                self.resetExtra();
                 self.state = .{ .respond = .{ .response = msg, .req = params.req } };
                 continue :sw self.state;
             },
@@ -251,7 +269,6 @@ pub const Connection = struct {
                     return .finish;
                 }
 
-                self.resetExtra();
                 try self.alloc.reset();
                 self.body = .empty;
                 self.state = .recv_head;
@@ -260,26 +277,28 @@ pub const Connection = struct {
         }
     }
 
-    fn handleRequest(self: *Connection, server: *Server, target: Target, extra: *[2]?*anyopaque) !?[]const u8 {
+    fn handleRequest(self: *Connection, server: *Server, target: Target, extra: *?*anyopaque, event_id: usize) !?[]const u8 {
         const body = self.body.items;
         switch (target) {
             .get_resource => |path| return try resourceFile(self.alloc.general(), server.resource_dir, path),
             .search => |query| {
-                if (extra[0] == null) {
-                    const searcher = try self.alloc.arena().create(tv_maze.Search);
-                    try searcher.initPinned(self.alloc.general(), query, server.spawner, self.service_id);
-                    extra[0] = searcher;
+                if (extra.* == null) {
+                    const searcher = try self.alloc.arena().create(RemoteSearch);
+                    try searcher.initPinned(
+                        self.alloc.general(),
+                        query,
+                        server.spawner,
+                        self.base_id,
+                        Ids.connection_concurrency,
+                    );
+                    extra.* = searcher;
                 }
 
-                const retriever: *tv_maze.Search = @ptrCast(@alignCast(extra[0].?));
-                const results = try retriever.poll(server.loop) orelse return null;
-
+                const searcher: *RemoteSearch = @ptrCast(@alignCast(extra.*));
+                const results = try searcher.poll(server.spawner, server.loop, event_id, self.base_id) orelse return null;
                 const out_body = try std.json.Stringify.valueAlloc(
                     self.alloc.general(),
-                    .{
-                        .movies = &[_]struct {}{},
-                        .shows = results,
-                    },
+                    results,
                     .{},
                 );
                 return try respondWithContent(
@@ -289,14 +308,14 @@ pub const Connection = struct {
                 );
             },
             .get_image => |id| {
-                if (extra[0] == null) {
+                if (extra.* == null) {
                     const url = try server.db.getImageUrl(self.alloc.general(), id) orelse return response_404;
                     const retriever: *ImageCache.Get = try self.alloc.arena().create(ImageCache.Get);
-                    retriever.* = try server.image_cache.get(self.alloc.general(), url, self.service_id);
-                    extra[0] = retriever;
+                    retriever.* = try server.image_cache.get(self.alloc.general(), url, self.base_id);
+                    extra.* = retriever;
                 }
 
-                const retriever: *ImageCache.Get = @ptrCast(@alignCast(extra[0].?));
+                const retriever: *ImageCache.Get = @ptrCast(@alignCast(extra.*));
                 const content = try retriever.poll(server.loop) orelse return null;
 
                 return try respondWithContent(
@@ -337,7 +356,7 @@ pub const Connection = struct {
 
                 const now = try sphtud.io.clock_gettime(.REALTIME);
 
-                if (extra[0] == null) {
+                if (extra.* == null) {
                     const existing = try server.db.getShows(self.alloc.general(), now);
 
                     for (existing) |show| {
@@ -349,11 +368,11 @@ pub const Connection = struct {
 
                     const retriever = try self.alloc.arena().create(tv_maze.ShowMeta);
                     const remote_id = types.TvMazeShowId{ .inner = params.remote_id };
-                    try retriever.initPinned(self.alloc.general(), remote_id, server.spawner, self.service_id);
-                    extra[0] = retriever;
+                    try retriever.initPinned(self.alloc.general(), remote_id, server.spawner, self.base_id);
+                    extra.* = retriever;
                 }
 
-                const retriever: *tv_maze.ShowMeta = @ptrCast(@alignCast(extra[0].?));
+                const retriever: *tv_maze.ShowMeta = @ptrCast(@alignCast(extra.*));
                 const meta = try retriever.poll(server.loop) orelse return null;
 
                 const show_id = try server.db.addShow(meta.show);
@@ -567,6 +586,39 @@ pub const Connection = struct {
                     "application/json",
                 );
             },
+            .put_movies => {
+                const update = std.json.parseFromSliceLeaky(struct {
+                    wikipedia_page_id: i64,
+                }, self.alloc.general(), body, .{
+                    .ignore_unknown_fields = true,
+                }) catch return response_400;
+
+                if (extra.* == null) {
+                    // Create some object who's input is a wikipedia page id and who's output is a RemoteMovie
+                    const resolver = try self.alloc.arena().create(wikipedia.RemoteMovieResolver);
+                    try resolver.initPinned(
+                        self.alloc.arena(),
+                        update.wikipedia_page_id,
+                        server.spawner,
+                        self.base_id,
+                    );
+                    extra.* = resolver;
+                }
+
+                const resolver: *wikipedia.RemoteMovieResolver = @ptrCast(@alignCast(extra.*));
+                const remote_movie = try resolver.poll(server.spawner, server.loop) orelse return null;
+
+                const movie_id = try server.db.addMovie(remote_movie);
+
+                const movie = try server.db.getMovie(self.alloc.general(), movie_id) orelse return response_404;
+                const out_body = try std.json.Stringify.valueAlloc(self.alloc.general(), movie, .{});
+
+                return try respondWithContent(
+                    self.alloc.general(),
+                    out_body,
+                    "application/json",
+                );
+            },
             .get_movie => |id| {
                 const movie = try server.db.getMovie(self.alloc.general(), id) orelse return response_404;
                 const out_body = try std.json.Stringify.valueAlloc(self.alloc.general(), movie, .{});
@@ -643,6 +695,7 @@ pub const Target = union(enum) {
     put_rating: types.RatingId,
     delete_rating: types.RatingId,
     get_movies,
+    put_movies,
     get_movie: types.MovieId,
     put_movie: types.MovieId,
     delete_movie: types.MovieId,
@@ -673,6 +726,7 @@ pub const Target = union(enum) {
         const second = it.next() orelse {
             if (first == .ratings and method == .PUT) return .put_ratings;
             if (first == .shows and method == .PUT) return .put_shows;
+            if (first == .movies and method == .PUT) return .put_movies;
             if (method != .GET) return fallthrough;
             switch (first) {
                 .shows => return .get_shows,
