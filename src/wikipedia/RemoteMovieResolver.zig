@@ -2,6 +2,7 @@ const std = @import("std");
 const sphtud = @import("sphtud");
 const types = @import("../types.zig");
 const util = @import("util.zig");
+const wikipedia = @import("../wikipedia.zig");
 
 alloc: std.mem.Allocator,
 service_id: usize,
@@ -22,15 +23,36 @@ wikidata_state: enum {
     wait_data,
 },
 
-pub fn initPinned(self: *@This(), alloc: std.mem.Allocator, page_id: i64, spawner: *sphtud.io.tls.Spawner, service_id: usize) !void {
-    const page_query = try std.fmt.allocPrint(alloc, "action=query&prop=revisions&format=json&formatversion=2&pageids={d}&rvslots=*&rvprop=content&rvlimit=1", .{page_id});
-    const page_uri = std.Uri{
-        .scheme = "https",
-        .host = .{ .raw = "en.wikipedia.org" },
-        .path = .{ .percent_encoded = "/w/api.php" },
-        .query = .{ .percent_encoded = page_query },
-    };
+const page_query_base = "action=query&prop=revisions&format=json&formatversion=2&rvslots=*&rvprop=content&rvlimit=1";
+const wikidata_query_base = "action=query&format=json&prop=pageprops";
 
+pub fn initTitlePinned(self: *@This(), alloc: std.mem.Allocator, page_title: []const u8, spawner: *sphtud.io.tls.Spawner, service_id: usize) !void {
+    var page_query = std.Io.Writer.Allocating.init(alloc);
+    try page_query.writer.writeAll(page_query_base ++ "&titles=");
+    try std.Uri.Component.formatQuery(.{ .raw = page_title }, &page_query.writer);
+
+    const page_uri = wikipedia.makeApiQuery(page_query.written());
+
+    var wikidata_query = std.Io.Writer.Allocating.init(alloc);
+    try wikidata_query.writer.writeAll(wikidata_query_base ++ "&titles=");
+    try std.Uri.Component.formatQuery(.{ .raw = page_title }, &wikidata_query.writer);
+
+    const pageprops_url = wikipedia.makeApiQuery(wikidata_query.written());
+
+    try self.initImpl(alloc, page_uri, pageprops_url, spawner, service_id);
+}
+
+pub fn initPinned(self: *@This(), alloc: std.mem.Allocator, page_id: i64, spawner: *sphtud.io.tls.Spawner, service_id: usize) !void {
+    const page_query = try std.fmt.allocPrint(alloc, page_query_base ++ "&pageids={d}", .{page_id});
+    const page_uri = wikipedia.makeApiQuery(page_query);
+
+    const wikidata_query = try std.fmt.allocPrint(alloc, wikidata_query_base ++ "&pageids={d}", .{page_id});
+    const wikidata_uri = wikipedia.makeApiQuery(wikidata_query);
+
+    try self.initImpl(alloc, page_uri, wikidata_uri, spawner, service_id);
+}
+
+fn initImpl(self: *@This(), alloc: std.mem.Allocator, page_uri: std.Uri, pageprops_uri: std.Uri, spawner: *sphtud.io.tls.Spawner, service_id: usize) !void {
     self.* = .{
         .alloc = alloc,
         .service_id = service_id,
@@ -45,17 +67,7 @@ pub fn initPinned(self: *@This(), alloc: std.mem.Allocator, page_id: i64, spawne
     try self.page.initPinned(alloc, page_uri, .{ .user_agent = util.user_agent }, spawner, service_id);
     errdefer self.page.deinit();
 
-    const wikidata_query = try std.fmt.allocPrint(alloc, "action=query&format=json&prop=pageprops&pageids={d}", .{page_id});
-
-    //https://en.wikipedia.org/w/api.php?action=query&format=json&prop=pageprops&pageids=12345
-    const pageprops_url = std.Uri{
-        .scheme = "https",
-        .host = .{ .raw = "en.wikipedia.org" },
-        .path = .{ .percent_encoded = "/w/api.php" },
-        .query = .{ .percent_encoded = wikidata_query },
-    };
-
-    try self.wikidata.initPinned(alloc, pageprops_url, .{ .user_agent = util.user_agent }, spawner, service_id);
+    try self.wikidata.initPinned(alloc, pageprops_uri, .{ .user_agent = util.user_agent }, spawner, service_id);
     errdefer self.wikidata.deinit();
 }
 

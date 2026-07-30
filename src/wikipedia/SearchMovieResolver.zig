@@ -48,7 +48,10 @@ pub fn poll(self: *@This(), spawner: *sphtud.io.tls.Spawner, loop: *sphtud.io.Lo
     switch (self.state) {
         .wait_page => {
             const infobox = util.parseInfoboxFilm(self.title, page_body) catch |e| {
-                if (e == error.NotAMovie) return .not_a_movie;
+                if (e == error.NotAMovie) {
+                    std.debug.print("{s}\n", .{page_body});
+                    return .not_a_movie;
+                }
                 return e;
             };
 

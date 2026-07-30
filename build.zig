@@ -40,6 +40,19 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("sphtud", sphtud_dep.module("sphtud"));
     b.installArtifact(exe);
 
+    const test_upgrade = b.addExecutable(.{
+        .name = "test-upgrade",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/test_upgrade.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_upgrade.root_module.linkLibrary(sqlite_lib);
+    test_upgrade.root_module.addImport("sqlite", sqlite_bindings.createModule());
+    test_upgrade.root_module.addImport("sphtud", sphtud_dep.module("sphtud"));
+    b.installArtifact(test_upgrade);
+
     const tests = b.addTest(.{
         .root_module = exe.root_module,
     });
