@@ -6,6 +6,7 @@ const types = @import("types.zig");
 const Db = @import("Db.zig");
 const ImageCache = @import("ImageCache.zig");
 const PeriodicUpdater = @import("PeriodicUpdater.zig");
+const MovieUpdater = @import("MovieUpdater.zig");
 
 const Ids = struct {
     runtime: sphtud.io.Runtime.Ids,
@@ -159,6 +160,19 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var tv_updater = try PeriodicUpdater.init(&alloc, &db, &io.tls_spawner, ids.tv_updater.start);
     if (args.poll_indexers) try tv_updater.trigger();
 
+    const movie_updater_alloc = try alloc.makeSubAlloc("movie updater");
+    var movie_updater: ?MovieUpdater = null;
+    if (args.poll_indexers) {
+        movie_updater = @as(MovieUpdater, undefined);
+        try movie_updater.?.initPinned(
+            movie_updater_alloc.general(),
+            &db,
+            &io.tls_spawner,
+            ids.movie_updater.start,
+            ids.movie_updater.end - ids.movie_updater.start + 1,
+        );
+    }
+
     const timer = try sphtud.io.timerfd_create(.BOOTTIME);
     try io.loop.register(.{
         .handle = timer,
@@ -197,6 +211,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
                 std.log.info("Updating episodes database", .{});
                 try tv_updater.trigger();
+
+                movie_updater = @as(MovieUpdater, undefined);
+                // FIXME: Should add MovieUpdater.trigger()
+                try movie_updater.?.initPinned(
+                    movie_updater_alloc.general(),
+                    &db,
+                    &io.tls_spawner,
+                    ids.movie_updater.start,
+                    ids.movie_updater.end - ids.movie_updater.start + 1,
+                );
             },
             ids.tv_updater.start...ids.tv_updater.end => {
                 try tv_updater.poll(&io.loop, event);
@@ -204,6 +228,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
             ids.signal => {
                 std.log.info("Caught sigint, exiting\n", .{});
                 break;
+            },
+            ids.movie_updater.start...ids.movie_updater.end => {
+                if (movie_updater == null) continue;
+
+                try movie_updater.?.poll(&io.tls_spawner, &io.loop, event);
+                if (movie_updater.?.isDone()) {
+                    // FIXME: This stuff should be owned by MovieUpdater
+                    try movie_updater_alloc.reset();
+                    movie_updater = null;
+                }
             },
             else => unreachable,
         }
