@@ -11,9 +11,11 @@ const TemplateIterator = @This();
 pub fn init(data: []const u8) !TemplateIterator {
     var buf = sphtud.lex.Buf.init(data);
     _ = buf.takeSequence("{{") orelse return error.NotATemplate;
-    return .{ .state = .{
-        .parsing = buf,
-    } };
+    return .{
+        .state = .{
+            .parsing = buf,
+        },
+    };
 }
 
 pub fn next(self: *TemplateIterator) !?[]const u8 {
@@ -34,9 +36,14 @@ pub fn next(self: *TemplateIterator) !?[]const u8 {
     var tag_stack = std.ArrayList(Tag).initBuffer(&tag_stack_buf);
 
     while (true) {
-        _ = tmp.takeUntilAny("{[|}]");
-        const idx = tmp.takeOne("{[|}]") orelse return error.EndOfStream;
+        _ = tmp.takeUntilAny("{[|}]<");
+        const idx = tmp.takeOne("{[|}]<") orelse return error.EndOfStream;
         switch (idx.data(tmp)) {
+            '<' => {
+                if (tmp.takeSequence("!--") != null) {
+                    _ = tmp.takeUntilSequence("-->");
+                }
+            },
             '{' => {
                 _ = tmp.takeOne("{") orelse continue;
                 try tag_stack.appendBounded(.@"{{");

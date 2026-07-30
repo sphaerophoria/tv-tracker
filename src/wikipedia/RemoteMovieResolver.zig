@@ -29,13 +29,14 @@ const wikidata_query_base = "action=query&format=json&prop=pageprops";
 pub fn initTitlePinned(self: *@This(), alloc: std.mem.Allocator, page_title: []const u8, spawner: *sphtud.io.tls.Spawner, service_id: usize) !void {
     var page_query = std.Io.Writer.Allocating.init(alloc);
     try page_query.writer.writeAll(page_query_base ++ "&titles=");
-    try std.Uri.Component.formatQuery(.{ .raw = page_title }, &page_query.writer);
+    try sphtud.http.urlencode(page_title, &page_query.writer);
 
     const page_uri = wikipedia.makeApiQuery(page_query.written());
+    std.debug.print("{f}\n", .{page_uri});
 
     var wikidata_query = std.Io.Writer.Allocating.init(alloc);
     try wikidata_query.writer.writeAll(wikidata_query_base ++ "&titles=");
-    try std.Uri.Component.formatQuery(.{ .raw = page_title }, &wikidata_query.writer);
+    try sphtud.http.urlencode(page_title, &wikidata_query.writer);
 
     const pageprops_url = wikipedia.makeApiQuery(wikidata_query.written());
 
@@ -157,28 +158,41 @@ pub fn poll(self: *@This(), spawner: *sphtud.io.tls.Spawner, loop: *sphtud.io.Lo
     const info = self.info orelse return null;
     if (self.poster_uri.len == 0) return null;
 
-    if (imdb_ref != .direct) {
-        switch (self.wikidata_state) {
-            .wait_id => return null,
-            .wait_data => {},
-        }
-
-        const wikidata = wikidata_opt orelse return null;
-        self.imdb_id = .{ .direct = util.imdbFromWikiData(self.alloc, wikidata) orelse return error.InvalidData };
-        imdb_ref = self.imdb_id.?;
-    }
-
     switch (imdb_ref) {
-        .direct => |id| {
-            return .{
-                .imdb_id = id,
-                .name = info.title,
-                .year = @intCast(info.released.year),
-                .image = self.poster_uri,
-                .theater_release_date = .{ .inner = info.released },
-                .home_release_date = null,
-            };
+        .direct, .direct_no_prefix => {},
+        .wikidata_name, .wikidata_id => {
+            switch (self.wikidata_state) {
+                .wait_id => return null,
+                .wait_data => {},
+            }
+
+            const wikidata = wikidata_opt orelse return null;
+            self.imdb_id = .{ .direct = util.imdbFromWikiData(self.alloc, wikidata) orelse return error.InvalidData };
+            imdb_ref = self.imdb_id.?;
         },
-        else => return null,
     }
+
+    const imdb_id: ?[]const u8 = switch (imdb_ref) {
+        .direct => |id| id,
+        .direct_no_prefix => |id| blk: {
+            const zero_pad = 7 -| id.len;
+            const zeros: [7]u8 = @splat('0');
+
+            break :blk try std.fmt.allocPrint(self.alloc, "tt{s}{s}", .{zeros[0..zero_pad], id});
+        },
+        else => null,
+    };
+
+    if (imdb_id) |id| {
+        return .{
+            .imdb_id = id,
+            .name = info.title,
+            .year = @intCast(info.released.year),
+            .image = self.poster_uri,
+            .theater_release_date = .{ .inner = info.released },
+            .home_release_date = null,
+        };
+    }
+
+    return null;
 }

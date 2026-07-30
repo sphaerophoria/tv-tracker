@@ -7,11 +7,13 @@ const wikipedia = @import("wikipedia.zig");
 const Ids = struct {
     movie_updater: sphtud.util.IdAlloc.Range,
     runtime: sphtud.io.Runtime.Ids,
+    resolver: usize,
 
     pub fn init() Ids {
         var alloc = sphtud.util.IdAlloc.init;
         return .{
             .movie_updater = alloc.allocMany(8),
+            .resolver = alloc.allocOne(),
             .runtime = .init(&alloc),
         };
     }
@@ -78,6 +80,7 @@ const MovieUpdater = struct {
 
     const Job = struct {
         db_id: usize,
+        imdb_id: []const u8,
         title: []const u8,
     };
 
@@ -85,27 +88,36 @@ const MovieUpdater = struct {
         self: *MovieUpdater,
         alloc: std.mem.Allocator,
         db: *Db,
-        movies: []const types.Movie,
         spawner: *sphtud.io.tls.Spawner,
         base_id: usize,
         concurrency: usize,
     ) !void {
+        const movies = try db.getMovies(alloc);
+        const to_update = try selectMoviesToUpdate(movies);
+
         var writer = std.Io.Writer.Allocating.init(alloc);
         try writer.writer.writeAll(
             "SELECT ?movie ?imdbId ?wikiTitle WHERE {" ++ " VALUES ?imdbId {",
         );
 
-        for (movies) |movie| {
+        for (to_update) |movie| {
             try writer.writer.print(" \"{s}\"", .{movie.imdb_id});
         }
 
         try writer.writer.writeAll(
-            " }" ++ " ?movie p:P345 ?stmt ." ++ " ?stmt ps:P345 ?imdbId ." ++ " ?article schema:about ?movie ;" ++ " schema:isPartOf <https://en.wikipedia.org/> ;" ++ " schema:name ?wikiTitle ." ++ " SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\". }" ++ " }",
+            " }" ++
+            " ?movie p:P345 ?stmt ."
+            ++ " ?stmt ps:P345 ?imdbId ."
+            ++ " ?article schema:about ?movie ;"
+            ++ " schema:isPartOf <https://en.wikipedia.org/> ;"
+            ++ " schema:name ?wikiTitle ."
+            ++ " SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\". }"
+            ++ " }",
         );
 
         var uri_query = std.Io.Writer.Allocating.init(alloc);
         try uri_query.writer.writeAll("query=");
-        try std.Uri.Component.formatQuery(.{ .raw = writer.written() }, &uri_query.writer);
+        try sphtud.http.urlencode(writer.written(), &uri_query.writer);
         try uri_query.writer.writeAll("&format=json");
 
         const uri = std.Uri{
@@ -120,7 +132,7 @@ const MovieUpdater = struct {
             .db = db,
             .base_id = base_id,
             .concurrency = concurrency,
-            .movies = movies,
+            .movies = to_update,
             .state = .{ .query_pages = undefined },
         };
         try self.state.query_pages.initPinned(alloc, uri, .{}, spawner, base_id);
@@ -160,9 +172,14 @@ const MovieUpdater = struct {
                 const idx = id - self.base_id;
                 if (rs.isComplete(idx)) return;
 
-                if (rs.running[idx].poll(spawner, loop)) |res_opt| {
+                if (rs.running[idx].poll(spawner, loop)) |res_opt| blk: {
                     const res = res_opt orelse return;
-                    _ = self.db.addMovie(res) catch |e| {
+                    if (!std.mem.eql(u8, res.imdb_id, rs.running_jobs[idx].imdb_id)) {
+                        std.log.err("Parsed imdb id {s} does not match expected {s} for {s}", .{res.imdb_id, rs.running_jobs[idx].imdb_id, rs.running_jobs[idx].title});
+                        break :blk;
+                    }
+                    const now = try sphtud.io.clock_gettime(.REALTIME);
+                    _ = self.db.addMovie(res, now) catch |e| {
                         std.log.err("Failed to save movie {s}: {}", .{ rs.running_jobs[idx].title, e });
                     };
                 } else |e| {
@@ -199,18 +216,67 @@ const MovieUpdater = struct {
     fn makeJobQueue(alloc: std.mem.Allocator, response: SparqlResponse, movies: []const types.Movie) ![]const Job {
         var ret: std.ArrayList(Job) = .empty;
         for (response.results.bindings) |binding| {
-            const db_id = for (movies) |m| {
-                if (std.mem.eql(u8, m.imdb_id, binding.imdbId.value)) break m.id.inner;
+            const db_id, const imdb_id = for (movies) |m| {
+                if (std.mem.eql(u8, m.imdb_id, binding.imdbId.value)) break .{ m.id.inner, m.imdb_id };
             } else continue;
 
             try ret.append(alloc, .{
                 .db_id = @intCast(db_id),
+                .imdb_id = imdb_id,
                 .title = binding.wikiTitle.value,
             });
         }
         return ret.items;
     }
 };
+
+fn selectMoviesToUpdate(movies: []types.Movie) ![]types.Movie {
+    var split_idx: usize = 0;
+
+    //* Get movies from database
+    //* If last update time is null, update now
+    //* if no home release and last update > 1w ago, update now
+    //* fill up to 10 movies with oldest N updates
+    for (movies) |*movie| {
+        const wants_update = blk: {
+            const last_update = movie.last_update_time orelse break :blk true;
+
+            if (movie.home_release_date == null) {
+                const now = try sphtud.io.clock_gettime(.REALTIME);
+                if (last_update.durationTo(now).toSeconds() > std.time.s_per_week) {
+                    break :blk true;
+                }
+            }
+
+            break :blk false;
+        };
+
+        if (wants_update) {
+            std.mem.swap(types.Movie, &movies[split_idx], movie);
+            split_idx += 1;
+        }
+    }
+
+    std.sort.block(types.Movie, movies[split_idx..], {}, struct {
+        fn f(_: void, a: types.Movie, b: types.Movie) bool {
+            return a.last_update_time.?.nanoseconds < b.last_update_time.?.nanoseconds;
+        }
+    }.f);
+
+    const iter_start = @min(split_idx, 10);
+    for (iter_start..10) |_| {
+        if (split_idx >= movies.len) {
+            split_idx = movies.len;
+            break;
+        }
+        std.mem.swap(types.Movie, &movies[split_idx], &movies[split_idx + 1]);
+        split_idx += 1;
+    }
+
+    return movies[0..split_idx];
+}
+
+// FIXME: Unit test selectMoviesToUpdate
 
 pub fn main(init: std.process.Init.Minimal) !void {
     var tpa: sphtud.alloc.TinyPageAllocator = undefined;
@@ -227,18 +293,23 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const db_path = args.next() orelse return error.NoDbPath;
 
     var db = try Db.init(db_path);
-    const movies = try db.getMovies(root_alloc.general());
-    std.debug.print("movies len: {d}\n", .{movies.len});
 
     var updater: MovieUpdater = undefined;
     try updater.initPinned(
         root_alloc.general(),
         &db,
-        movies,
         &runtime.tls_spawner,
         ids.movie_updater.start,
         ids.movie_updater.end - ids.movie_updater.start + 1,
     );
+
+    //var resolver: wikipedia.RemoteMovieResolver = undefined;
+    //try resolver.initTitlePinned(
+    //    root_alloc.general(),
+    //    "Lilo & Stitch",
+    //    &runtime.tls_spawner,
+    //    ids.resolver,
+    //);
 
     while (!updater.isDone()) {
         const id = try runtime.service(ids.runtime);
@@ -247,6 +318,16 @@ pub fn main(init: std.process.Init.Minimal) !void {
             try updater.poll(&runtime.tls_spawner, &runtime.loop, id);
         }
     }
+
+    //while (true) {
+    //    const id = try runtime.service(ids.runtime);
+
+    //    if (id == ids.resolver) {
+    //        const movie = try resolver.poll(&runtime.tls_spawner, &runtime.loop) orelse continue;
+    //        std.debug.print("Movie has id {s}\n", .{movie.imdb_id});
+    //        return;
+    //    }
+    //}
 
     std.log.info("movie update complete", .{});
 }

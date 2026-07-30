@@ -228,4 +228,5 @@ pub const Movie = struct {
     rating_id: ?RatingId,
     theater_release_date: ?Date,
     home_release_date: ?Date,
+    last_update_time: ?std.Io.Timestamp,
 };

@@ -608,7 +608,8 @@ pub const Connection = struct {
                 const resolver: *wikipedia.RemoteMovieResolver = @ptrCast(@alignCast(extra.*));
                 const remote_movie = try resolver.poll(server.spawner, server.loop) orelse return null;
 
-                const movie_id = try server.db.addMovie(remote_movie);
+                const now = try sphtud.io.clock_gettime(.REALTIME);
+                const movie_id = try server.db.addMovie(remote_movie, now);
 
                 const movie = try server.db.getMovie(self.alloc.general(), movie_id) orelse return response_404;
                 const out_body = try std.json.Stringify.valueAlloc(self.alloc.general(), movie, .{});

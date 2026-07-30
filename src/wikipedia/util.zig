@@ -8,6 +8,7 @@ pub const ImdbRef = union(enum) {
     wikidata_name: []const u8,
     wikidata_id: []const u8,
     direct: []const u8,
+    direct_no_prefix: []const u8,
 };
 
 pub const InfoboxFilm = struct {
@@ -61,7 +62,10 @@ pub fn extractReleaseDate(released: []const u8) sphtud.datetime.Date {
 
 pub fn parseInfoboxFilm(title: []const u8, page_source: []const u8) !InfoboxFilm {
     const infobox_key = "{{Infobox film";
-    const idx = std.mem.indexOf(u8, page_source, infobox_key) orelse return error.NotAMovie;
+    const idx = std.mem.indexOf(u8, page_source, infobox_key) orelse {
+        std.debug.print("{s}\n", .{page_source});
+        return error.NotAMovie;
+    };
 
     var ret = InfoboxFilm{
         .title = pageNameBase(title),
@@ -141,7 +145,8 @@ pub fn parseImdbId(movie_title: []const u8, page_source: []const u8) !ImdbRef {
             } else {
                 break :ref .{ .wikidata_name = movie_title };
             }
-        } else .{ .direct = id };
+        } else if (std.mem.startsWith(u8, id, "tt")) .{ .direct = id }
+        else .{ .direct_no_prefix = id };
 
         const similarity = try sphtud.diff.levenshteinDistance(scratch.allocator(), movie_title, title);
 
@@ -244,10 +249,18 @@ test "parseInfoboxFilm odyssey" {
     try std.testing.expectEqualStrings("The Odyssey (2026 film) poster.jpg", film.poster_filename);
 }
 
+test "parseInfoboxFilm jurassic park" {
+    const source = @embedFile("res/jurassic_park.txt");
+    const film = try parseInfoboxFilm("Jurassic Park", source);
+    try std.testing.expectEqualStrings("Jurassic Park", film.title);
+    try std.testing.expectEqual(sphtud.datetime.Date{ .year = 1993, .month = .jun, .day = 9 }, film.released);
+    try std.testing.expectEqualStrings("Jurassic Park poster.jpg", film.poster_filename);
+}
+
 test "parseImdbId furious 7" {
     const source = @embedFile("res/furious_7.txt");
     const ref = try parseImdbId("Furious 7", source);
-    try std.testing.expectEqualDeep(ImdbRef{ .direct = "2820852" }, ref);
+    try std.testing.expectEqualDeep(ImdbRef{ .direct_no_prefix = "2820852" }, ref);
 }
 
 test "parseImdbId odyssey falls back to wikidata name" {

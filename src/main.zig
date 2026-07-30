@@ -11,7 +11,8 @@ const Ids = struct {
     runtime: sphtud.io.Runtime.Ids,
     server: Server.Ids,
     rescan: usize,
-    updater: sphtud.io.IdAlloc.Range,
+    tv_updater: sphtud.io.IdAlloc.Range,
+    movie_updater: sphtud.io.IdAlloc.Range,
     signal: usize,
 
     fn init() Ids {
@@ -20,7 +21,8 @@ const Ids = struct {
             .runtime = .init(&alloc),
             .server = .init(&alloc),
             .rescan = alloc.allocOne(),
-            .updater = alloc.allocMany(PeriodicUpdater.concurrency),
+            .tv_updater = alloc.allocMany(PeriodicUpdater.concurrency),
+            .movie_updater = alloc.allocMany(8),
             .signal = alloc.allocOne(),
         };
     }
@@ -154,8 +156,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var server = try Server.init(&alloc, args.port, resources, &db, &image_cache, &io.tls_spawner, &io.loop, ids.server);
     defer server.deinit();
 
-    var updater = try PeriodicUpdater.init(&alloc, &db, &io.tls_spawner, ids.updater.start);
-    if (args.poll_indexers) try updater.trigger();
+    var tv_updater = try PeriodicUpdater.init(&alloc, &db, &io.tls_spawner, ids.tv_updater.start);
+    if (args.poll_indexers) try tv_updater.trigger();
 
     const timer = try sphtud.io.timerfd_create(.BOOTTIME);
     try io.loop.register(.{
@@ -194,10 +196,10 @@ pub fn main(init: std.process.Init.Minimal) !void {
                 _ = try sphtud.io.read(timer, std.mem.asBytes(&val));
 
                 std.log.info("Updating episodes database", .{});
-                try updater.trigger();
+                try tv_updater.trigger();
             },
-            ids.updater.start...ids.updater.end => {
-                try updater.poll(&io.loop, event);
+            ids.tv_updater.start...ids.tv_updater.end => {
+                try tv_updater.poll(&io.loop, event);
             },
             ids.signal => {
                 std.log.info("Caught sigint, exiting\n", .{});
