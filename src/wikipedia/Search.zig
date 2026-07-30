@@ -7,8 +7,10 @@ const SearchMovieResolver = @import("SearchMovieResolver.zig");
 alloc: std.mem.Allocator,
 base_id: usize,
 concurrency: usize,
+timer_service: *sphtud.io.TimerService,
+rate_limiter: *sphtud.util.RateLimiter,
 state: union(enum) {
-    wait_search_res: sphtud.io.SimpleHttpTls,
+    wait_search_res: sphtud.io.LimitedHttpTls,
     wait_movies: WaitMovies,
     finished: []const wikipedia.SearchMovie,
 },
@@ -40,7 +42,7 @@ const Job = struct {
     id: i64,
 };
 
-pub fn initPinned(self: *@This(), alloc: std.mem.Allocator, query_percent_coded: []const u8, tls_spawner: *sphtud.io.tls.Spawner, base_id: usize, concurrency: usize) !void {
+pub fn initPinned(self: *@This(), alloc: std.mem.Allocator, query_percent_coded: []const u8, tls_spawner: *sphtud.io.tls.Spawner, timer_service: *sphtud.io.TimerService, rate_limiter: *sphtud.util.RateLimiter, base_id: usize, concurrency: usize) !void {
     if (concurrency < 2) return error.ConcurrencyTooLow;
 
     const query_string = try std.fmt.allocPrint(alloc, "q={s}&limit=10", .{query_percent_coded});
@@ -54,12 +56,16 @@ pub fn initPinned(self: *@This(), alloc: std.mem.Allocator, query_percent_coded:
     self.alloc = alloc;
     self.base_id = base_id;
     self.concurrency = concurrency;
+    self.timer_service = timer_service;
+    self.rate_limiter = rate_limiter;
     self.state = .{ .wait_search_res = undefined };
     try self.state.wait_search_res.initPinned(
         alloc,
         uri,
         .{ .user_agent = util.user_agent },
         tls_spawner,
+        timer_service,
+        rate_limiter,
         base_id,
     );
 }
@@ -156,6 +162,8 @@ fn queueMovieResolution(self: *@This(), ws: *WaitMovies, idx: usize, tls_spawner
         job.id,
         job.title,
         tls_spawner,
+        self.timer_service,
+        self.rate_limiter,
         self.base_id + idx,
     );
     ws.complete_mask.setValue(idx, false);

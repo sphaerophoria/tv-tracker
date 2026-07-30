@@ -7,7 +7,9 @@ alloc: std.mem.Allocator,
 service_id: usize,
 page_id: i64,
 title: []const u8,
-page: sphtud.io.SimpleHttpTls,
+page: sphtud.io.LimitedHttpTls,
+timer_service: *sphtud.io.TimerService,
+rate_limiter: *sphtud.util.RateLimiter,
 state: union(enum) {
     wait_page,
     wait_poster_uri: util.InfoboxFilm,
@@ -19,7 +21,7 @@ pub const PollRes = union(enum) {
     wait,
 };
 
-pub fn initPinned(self: *@This(), alloc: std.mem.Allocator, page_id: i64, title: []const u8, tls_spawner: *sphtud.io.tls.Spawner, service_id: usize) !void {
+pub fn initPinned(self: *@This(), alloc: std.mem.Allocator, page_id: i64, title: []const u8, tls_spawner: *sphtud.io.tls.Spawner, timer_service: *sphtud.io.TimerService, rate_limiter: *sphtud.util.RateLimiter, service_id: usize) !void {
     const page_uri = try util.pageUriFromPageId(alloc, page_id);
 
     self.* = .{
@@ -27,14 +29,14 @@ pub fn initPinned(self: *@This(), alloc: std.mem.Allocator, page_id: i64, title:
         .service_id = service_id,
         .page_id = page_id,
         .title = title,
+        .timer_service = timer_service,
+        .rate_limiter = rate_limiter,
         .state = .wait_page,
         .page = undefined,
     };
 
-    try self.page.initPinned(alloc, page_uri, .{ .user_agent = util.user_agent }, tls_spawner, service_id);
+    try self.page.initPinned(alloc, page_uri, .{ .user_agent = util.user_agent }, tls_spawner, timer_service, rate_limiter, service_id);
     errdefer self.page.deinit();
-
-    self.service_id = service_id;
 }
 
 pub fn deinit(self: *@This()) void {
@@ -48,7 +50,9 @@ pub fn poll(self: *@This(), spawner: *sphtud.io.tls.Spawner, loop: *sphtud.io.Lo
     switch (self.state) {
         .wait_page => {
             const infobox = util.parseInfoboxFilm(self.title, page_body) catch |e| {
-                if (e == error.NotAMovie) return .not_a_movie;
+                if (e == error.NotAMovie) {
+                    return .not_a_movie;
+                }
                 return e;
             };
 
@@ -61,6 +65,8 @@ pub fn poll(self: *@This(), spawner: *sphtud.io.tls.Spawner, loop: *sphtud.io.Lo
                 poster_meta_uri,
                 .{ .user_agent = util.user_agent },
                 spawner,
+                self.timer_service,
+                self.rate_limiter,
                 self.service_id,
             );
             self.state = .{ .wait_poster_uri = infobox };

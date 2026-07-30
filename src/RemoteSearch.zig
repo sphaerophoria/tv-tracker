@@ -40,6 +40,8 @@ pub fn initPinned(
     alloc: std.mem.Allocator,
     query_percent_encoded: []const u8,
     spawner: *sphtud.io.tls.Spawner,
+    timer_service: *sphtud.io.TimerService,
+    rate_limiter: *sphtud.util.RateLimiter,
     base_id: usize,
     concurrency: usize,
 ) !void {
@@ -59,6 +61,8 @@ pub fn initPinned(
         alloc,
         query_percent_encoded,
         spawner,
+        timer_service,
+        rate_limiter,
         Ids.movies(base_id),
         movie_concurrency,
     );

@@ -14,6 +14,8 @@ loop: *sphtud.io.Loop,
 db: *Db,
 image_cache: *ImageCache,
 spawner: *sphtud.io.tls.Spawner,
+timer_service: *sphtud.io.TimerService,
+rate_limiter: *sphtud.util.RateLimiter,
 listener: c_int,
 resource_dir: c_int,
 
@@ -36,7 +38,7 @@ pub const Ids = struct {
     }
 };
 
-pub fn init(parent_alloc: *sphtud.alloc.Sphalloc, port: u16, resource_dir: c_int, db: *Db, image_cache: *ImageCache, spawner: *sphtud.io.tls.Spawner, loop: *sphtud.io.Loop, ids: Ids) !Server {
+pub fn init(parent_alloc: *sphtud.alloc.Sphalloc, port: u16, resource_dir: c_int, db: *Db, image_cache: *ImageCache, spawner: *sphtud.io.tls.Spawner, timer_service: *sphtud.io.TimerService, rate_limiter: *sphtud.util.RateLimiter, loop: *sphtud.io.Loop, ids: Ids) !Server {
     const socket = try sphtud.io.createTcpListener(.{
         .ip4 = .{
             .bytes = .{ 0, 0, 0, 0 },
@@ -66,6 +68,8 @@ pub fn init(parent_alloc: *sphtud.alloc.Sphalloc, port: u16, resource_dir: c_int
         .db = db,
         .image_cache = image_cache,
         .spawner = spawner,
+        .timer_service = timer_service,
+        .rate_limiter = rate_limiter,
         .listener = socket,
         .resource_dir = resource_dir,
     };
@@ -288,6 +292,8 @@ pub const Connection = struct {
                         self.alloc.general(),
                         query,
                         server.spawner,
+                        server.timer_service,
+                        server.rate_limiter,
                         self.base_id,
                         Ids.connection_concurrency,
                     );
@@ -600,6 +606,8 @@ pub const Connection = struct {
                         self.alloc.arena(),
                         update.wikipedia_page_id,
                         server.spawner,
+                        server.timer_service,
+                        server.rate_limiter,
                         self.base_id,
                     );
                     extra.* = resolver;
@@ -608,7 +616,8 @@ pub const Connection = struct {
                 const resolver: *wikipedia.RemoteMovieResolver = @ptrCast(@alignCast(extra.*));
                 const remote_movie = try resolver.poll(server.spawner, server.loop) orelse return null;
 
-                const movie_id = try server.db.addMovie(remote_movie);
+                const now = try sphtud.io.clock_gettime(.REALTIME);
+                const movie_id = try server.db.addMovie(remote_movie, now);
 
                 const movie = try server.db.getMovie(self.alloc.general(), movie_id) orelse return response_404;
                 const out_body = try std.json.Stringify.valueAlloc(self.alloc.general(), movie, .{});

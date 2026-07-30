@@ -48,6 +48,7 @@ fn initializeConnection(self: *Db) !void {
         upgradeV6V7,
         upgradeV7V8,
         upgradeV8V9,
+        upgradeV9V10,
     };
 
     const version = try self.userVersion();
@@ -261,16 +262,23 @@ fn upgradeV8V9(self: *Db) !void {
     );
 }
 
+fn upgradeV9V10(self: *Db) !void {
+    try self.upgradeBatch(
+        \\ALTER TABLE movies ADD COLUMN last_update_time INTEGER;
+        \\PRAGMA user_version = 10;
+    );
+}
+
 test "fresh db migrates to latest version" {
     var db = try Db.init(":memory:");
     defer _ = c.sqlite3_close(db.sqlite);
 
-    try std.testing.expectEqual(@as(i64, 9), try db.userVersion());
+    try std.testing.expectEqual(@as(i64, 10), try db.userVersion());
 
     // Re-running initialization on an already-current DB is a no-op and must
     // still land on the latest version (exercises the skip-already-applied path).
     try db.initializeConnection();
-    try std.testing.expectEqual(@as(i64, 9), try db.userVersion());
+    try std.testing.expectEqual(@as(i64, 10), try db.userVersion());
 }
 
 const get_shows_query =
@@ -655,7 +663,7 @@ pub fn getImageUrl(self: *Db, gpa: std.mem.Allocator, id: types.ImageId) !?[]con
     }
 }
 
-pub fn addMovie(self: *Db, movie: types.RemoteMovie) !types.MovieId {
+pub fn addMovie(self: *Db, movie: types.RemoteMovie, now: std.Io.Timestamp) !types.MovieId {
     try self.exec("BEGIN", &.{});
     errdefer self.exec("ROLLBACK", &.{}) catch {};
 
@@ -664,13 +672,22 @@ pub fn addMovie(self: *Db, movie: types.RemoteMovie) !types.MovieId {
 
     const id: types.MovieId = if (try self.findRemoteMovie(movie.imdb_id)) |existing| blk: {
         try self.exec(
+            \\UPDATE images
+            \\SET url = ?2
+            \\WHERE id = (SELECT image FROM movies WHERE id = ?1)
+        , &.{
+            .{ .i64 = existing.inner },
+            .{ .text = movie.image },
+        });
+        try self.exec(
             \\UPDATE movies
-            \\SET theater_release_date = ?2, home_release_date = ?3
+            \\SET theater_release_date = ?2, home_release_date = ?3, last_update_time = ?4
             \\WHERE id = ?1
         , &.{
             .{ .i64 = existing.inner },
             theater,
             home,
+            .{ .i64 = now.toSeconds() },
         });
         break :blk existing;
     } else blk: {
@@ -678,8 +695,8 @@ pub fn addMovie(self: *Db, movie: types.RemoteMovie) !types.MovieId {
         const image_id = c.sqlite3_last_insert_rowid(self.sqlite);
 
         try self.exec(
-            \\INSERT INTO movies(imdb_id, name, year, image, theater_release_date, home_release_date)
-            \\VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            \\INSERT INTO movies(imdb_id, name, year, image, theater_release_date, home_release_date, last_update_time)
+            \\VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
         , &.{
             .{ .text = movie.imdb_id },
             .{ .text = movie.name },
@@ -687,6 +704,7 @@ pub fn addMovie(self: *Db, movie: types.RemoteMovie) !types.MovieId {
             .{ .i64 = image_id },
             theater,
             home,
+            .{ .i64 = now.toSeconds() },
         });
         break :blk .{ .inner = c.sqlite3_last_insert_rowid(self.sqlite) };
     };
@@ -708,13 +726,13 @@ fn findRemoteMovie(self: *Db, imdb_id: []const u8) !?types.MovieId {
 }
 
 const get_movies_query =
-    \\SELECT id, imdb_id, name, year, image, theater_release_date, home_release_date, movie_watch_status.watch_date, movie_ratings.rating_id
+    \\SELECT id, imdb_id, name, year, image, theater_release_date, home_release_date, movie_watch_status.watch_date, movie_ratings.rating_id, last_update_time
     \\FROM movies
     \\LEFT JOIN movie_watch_status ON movies.id = movie_watch_status.movie_id
     \\LEFT JOIN movie_ratings ON movies.id = movie_ratings.movie_id
 ;
 
-pub fn getMovies(self: *Db, gpa: std.mem.Allocator) ![]const types.Movie {
+pub fn getMovies(self: *Db, gpa: std.mem.Allocator) ![]types.Movie {
     const stmt = try self.prepare(get_movies_query, &.{});
     defer _ = c.sqlite3_finalize(stmt);
 
@@ -758,6 +776,7 @@ fn movieFromRow(self: *Db, alloc: std.mem.Allocator, stmt: *c.sqlite3_stmt) !typ
     const home_release_date = try self.rowi64(stmt, 6);
     const watch_date = try self.rowi64(stmt, 7);
     const rating_id = try self.rowi64(stmt, 8);
+    const last_update_timestamp: ?std.Io.Timestamp = if (try self.rowi64(stmt, 9)) |v| .fromNanoseconds(v * std.time.ns_per_s) else null;
 
     return .{
         .id = .{ .inner = id },
@@ -769,6 +788,7 @@ fn movieFromRow(self: *Db, alloc: std.mem.Allocator, stmt: *c.sqlite3_stmt) !typ
         .rating_id = if (rating_id) |v| .{ .inner = v } else null,
         .theater_release_date = if (theater_release_date) |v| .{ .inner = sphtud.datetime.Date.fromCeDay(v) } else null,
         .home_release_date = if (home_release_date) |v| .{ .inner = sphtud.datetime.Date.fromCeDay(v) } else null,
+        .last_update_time = last_update_timestamp,
     };
 }
 
@@ -1908,15 +1928,20 @@ fn testMovie() types.RemoteMovie {
     };
 }
 
+fn testTimestamp() std.Io.Timestamp {
+    return .fromNanoseconds(123094 * std.time.ns_per_s);
+}
+
 test "full movie in out" {
     var t = try TestDb.init();
     defer t.deinit();
 
     const movie = testMovie();
 
-    const movie_id = try t.db.addMovie(movie);
+    const movie_id = try t.db.addMovie(movie, testTimestamp());
 
     const inserted_movie = (try t.db.getMovie(t.gpa(), movie_id)).?;
+    try testing.expectEqual(inserted_movie.last_update_time, testTimestamp());
     try testing.expectEqualDeep(movie, try remoteFromMovie(t.gpa(), &t.db, inserted_movie));
 
     const movies = try t.db.getMovies(t.gpa());
@@ -1930,16 +1955,31 @@ test "add duplicate movie" {
 
     const movie = testMovie();
 
-    const movie_id = try t.db.addMovie(movie);
-    const movie_id2 = try t.db.addMovie(movie);
+    const movie_id = try t.db.addMovie(movie, testTimestamp());
+    const movie_id2 = try t.db.addMovie(movie, testTimestamp());
     try testing.expectEqual(movie_id.inner, movie_id2.inner);
+}
+
+test "update movie poster uri" {
+    var t = try TestDb.init();
+    defer t.deinit();
+
+    var movie = testMovie();
+    const movie_id = try t.db.addMovie(movie, testTimestamp());
+
+    movie.image = "http://new_image";
+    _ = try t.db.addMovie(movie, testTimestamp());
+
+    const updated = (try t.db.getMovie(t.gpa(), movie_id)).?;
+    const remote = try remoteFromMovie(t.gpa(), &t.db, updated);
+    try testing.expectEqualStrings("http://new_image", remote.image);
 }
 
 test "watch movie" {
     var t = try TestDb.init();
     defer t.deinit();
 
-    const movie_id = try t.db.addMovie(testMovie());
+    const movie_id = try t.db.addMovie(testMovie(), testTimestamp());
     try testing.expectEqual(false, (try t.db.getMovie(t.gpa(), movie_id)).?.watched);
 
     try t.db.setMovieWatchStatus(movie_id, genDate(1234).inner);
@@ -1953,7 +1993,7 @@ test "rate movie" {
     var t = try TestDb.init();
     defer t.deinit();
 
-    const movie_id = try t.db.addMovie(testMovie());
+    const movie_id = try t.db.addMovie(testMovie(), testTimestamp());
     try testing.expectEqualDeep(@as(?types.RatingId, null), (try t.db.getMovie(t.gpa(), movie_id)).?.rating_id);
 
     const rating_id = try t.db.addRating("test");
@@ -1969,7 +2009,7 @@ test "delete movie" {
     var t = try TestDb.init();
     defer t.deinit();
 
-    const movie_id = try t.db.addMovie(testMovie());
+    const movie_id = try t.db.addMovie(testMovie(), testTimestamp());
     const inserted_movie = (try t.db.getMovie(t.gpa(), movie_id)).?;
     try testing.expect((try t.db.getImageUrl(t.gpa(), inserted_movie.image)) != null);
 
