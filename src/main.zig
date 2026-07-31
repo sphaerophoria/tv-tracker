@@ -147,14 +147,14 @@ pub fn main(init: std.process.Init.Minimal) !void {
     const resources = try sphtud.io.open(args.html_path, .{ .DIRECTORY = true }, 0);
     defer sphtud.io.close(resources);
 
+    var wikipedia_rate_limiter = sphtud.util.RateLimiter.init(100, std.Io.Duration.fromSeconds(60), 10);
+
     const cache_dir = try sphtud.io.open(args.cache_path, .{ .DIRECTORY = true }, 0);
     defer sphtud.io.close(cache_dir);
-    var image_cache = ImageCache.init(cache_dir, &io.tls_spawner);
+    var image_cache = ImageCache.init(cache_dir, &io.tls_spawner, &io.timer_service, &wikipedia_rate_limiter);
 
     var db = try Db.init(args.db_path);
     defer db.deinit();
-
-    var wikipedia_rate_limiter = sphtud.util.RateLimiter.init(100, std.Io.Duration.fromSeconds(60));
 
     var server = try Server.init(&alloc, args.port, resources, &db, &image_cache, &io.tls_spawner, &io.timer_service, &wikipedia_rate_limiter, &io.loop, ids.server);
     defer server.deinit();

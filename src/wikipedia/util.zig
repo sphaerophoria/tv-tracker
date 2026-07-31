@@ -2,7 +2,7 @@ const std = @import("std");
 const sphtud = @import("sphtud");
 const TemplateIterator = @import("TemplateIterator.zig");
 
-pub const user_agent = "SphaeroBot2/0.0 (https://twitch.tv/sphaerophoria) sphtud/0.0.1";
+pub const user_agent = @import("../user_agent.zig").user_agent;
 
 pub const ImdbRef = union(enum) {
     wikidata_name: []const u8,

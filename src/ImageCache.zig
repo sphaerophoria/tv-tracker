@@ -4,18 +4,34 @@ const sys = sphtud.io.system;
 
 dir: c_int,
 spawner: *sphtud.io.tls.Spawner,
+timer: *sphtud.io.TimerService,
+wikipedia_rate_limiter: *sphtud.util.RateLimiter,
+unlimited_rate_limiter: sphtud.util.RateLimiter,
 
 const ImageCache = @This();
 
-pub fn init(dir: c_int, spawner: *sphtud.io.tls.Spawner) ImageCache {
-    return .{ .dir = dir, .spawner = spawner };
+const user_agent = @import("user_agent.zig").user_agent;
+
+pub fn init(
+    dir: c_int,
+    spawner: *sphtud.io.tls.Spawner,
+    timer: *sphtud.io.TimerService,
+    wikipedia_rate_limiter: *sphtud.util.RateLimiter,
+) ImageCache {
+    return .{
+        .dir = dir,
+        .spawner = spawner,
+        .timer = timer,
+        .wikipedia_rate_limiter = wikipedia_rate_limiter,
+        .unlimited_rate_limiter = .init(std.math.maxInt(u32), .fromSeconds(1), 1),
+    };
 }
 
 pub const Get = union(enum) {
     fetching: struct {
         cache_dir: c_int,
         url: []const u8,
-        fetcher: *sphtud.io.SimpleHttpTls,
+        fetcher: *sphtud.io.LimitedHttpTls,
         service_id: usize,
     },
     finished: []const u8,
@@ -64,8 +80,11 @@ pub fn get(self: *ImageCache, gpa: std.mem.Allocator, url: []const u8, service_i
     const filename = try encodeUrl(&name_buf, url);
 
     const file_fd = sphtud.io.openat(self.dir, filename, .{}, 0) catch {
-        const fetcher = try gpa.create(sphtud.io.SimpleHttpTls);
-        try fetcher.initPinned(gpa, try .parse(url), .{}, self.spawner, service_id);
+        const fetcher = try gpa.create(sphtud.io.LimitedHttpTls);
+        const rate_limiter = if (std.mem.indexOf(u8, url, "wikipedia") != null) self.wikipedia_rate_limiter else &self.unlimited_rate_limiter;
+        try fetcher.initPinned(gpa, try .parse(url), .{
+            .user_agent = user_agent,
+        }, self.spawner, self.timer, rate_limiter, service_id);
         return .{
             .fetching = .{
                 .cache_dir = self.dir,
