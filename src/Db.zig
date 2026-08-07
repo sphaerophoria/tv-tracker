@@ -49,6 +49,7 @@ fn initializeConnection(self: *Db) !void {
         upgradeV7V8,
         upgradeV8V9,
         upgradeV9V10,
+        upgradeV10V11,
     };
 
     const version = try self.userVersion();
@@ -269,20 +270,30 @@ fn upgradeV9V10(self: *Db) !void {
     );
 }
 
+fn upgradeV10V11(self: *Db) !void {
+    try self.upgradeBatch(
+        \\ALTER TABLE shows ADD COLUMN notes TEXT;
+        \\UPDATE shows SET notes = (SELECT content FROM notes WHERE notes.show_id = shows.id);
+        \\DROP TABLE notes;
+        \\ALTER TABLE movies ADD COLUMN notes TEXT;
+        \\PRAGMA user_version = 11;
+    );
+}
+
 test "fresh db migrates to latest version" {
     var db = try Db.init(":memory:");
     defer _ = c.sqlite3_close(db.sqlite);
 
-    try std.testing.expectEqual(@as(i64, 10), try db.userVersion());
+    try std.testing.expectEqual(@as(i64, 11), try db.userVersion());
 
     // Re-running initialization on an already-current DB is a no-op and must
     // still land on the latest version (exercises the skip-already-applied path).
     try db.initializeConnection();
-    try std.testing.expectEqual(@as(i64, 10), try db.userVersion());
+    try std.testing.expectEqual(@as(i64, 11), try db.userVersion());
 }
 
 const get_shows_query =
-    \\SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_id, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, epi_count.count, paused_shows.show_id, show_ratings.rating_id, notes.content FROM shows
+    \\SELECT shows.id, shows.tvmaze_id, shows.name, shows.image_id, shows.year, shows.tvmaze_url, shows.imdb_id, shows.tvdb_id, epi_count.count, paused_shows.show_id, show_ratings.rating_id, shows.notes FROM shows
     \\LEFT JOIN
     \\    (
     \\        SELECT show_id, COUNT(*) as count FROM episodes
@@ -292,7 +303,6 @@ const get_shows_query =
     \\    ON shows.id = epi_count.show_id
     \\LEFT JOIN paused_shows ON shows.id = paused_shows.show_id
     \\LEFT JOIN show_ratings ON shows.id = show_ratings.show_id
-    \\LEFT JOIN notes ON shows.id = notes.show_id
 ;
 
 pub fn getShows(self: *Db, gpa: std.mem.Allocator, now: std.Io.Timestamp) !Shows {
@@ -726,7 +736,7 @@ fn findRemoteMovie(self: *Db, imdb_id: []const u8) !?types.MovieId {
 }
 
 const get_movies_query =
-    \\SELECT id, imdb_id, name, year, image, theater_release_date, home_release_date, movie_watch_status.watch_date, movie_ratings.rating_id, last_update_time
+    \\SELECT id, imdb_id, name, year, image, theater_release_date, home_release_date, movie_watch_status.watch_date, movie_ratings.rating_id, last_update_time, movies.notes
     \\FROM movies
     \\LEFT JOIN movie_watch_status ON movies.id = movie_watch_status.movie_id
     \\LEFT JOIN movie_ratings ON movies.id = movie_ratings.movie_id
@@ -777,6 +787,7 @@ fn movieFromRow(self: *Db, alloc: std.mem.Allocator, stmt: *c.sqlite3_stmt) !typ
     const watch_date = try self.rowi64(stmt, 7);
     const rating_id = try self.rowi64(stmt, 8);
     const last_update_timestamp: ?std.Io.Timestamp = if (try self.rowi64(stmt, 9)) |v| .fromNanoseconds(v * std.time.ns_per_s) else null;
+    const notes = try self.rowText(alloc, stmt, 10);
 
     return .{
         .id = .{ .inner = id },
@@ -789,6 +800,7 @@ fn movieFromRow(self: *Db, alloc: std.mem.Allocator, stmt: *c.sqlite3_stmt) !typ
         .theater_release_date = if (theater_release_date) |v| .{ .inner = sphtud.datetime.Date.fromCeDay(v) } else null,
         .home_release_date = if (home_release_date) |v| .{ .inner = sphtud.datetime.Date.fromCeDay(v) } else null,
         .last_update_time = last_update_timestamp,
+        .notes = notes,
     };
 }
 
@@ -807,6 +819,15 @@ pub fn setMovieRating(self: *Db, movie_id: types.MovieId, rating_id: ?types.Rati
             .{ .i64 = movie_id.inner },
         });
     }
+}
+
+pub fn setMovieNotes(self: *Db, movie_id: types.MovieId, notes: []const u8) !void {
+    try self.exec(
+        \\UPDATE movies SET notes = ?2 WHERE id = ?1
+    , &.{
+        .{ .i64 = movie_id.inner },
+        .{ .text = notes },
+    });
 }
 
 pub fn setMovieWatchStatus(self: *Db, id: types.MovieId, watched: ?sphtud.datetime.Date) !void {
@@ -886,9 +907,7 @@ pub fn setShowRating(self: *Db, show_id: types.ShowId, rating_id: ?types.RatingI
 
 pub fn setShowNotes(self: *Db, show_id: types.ShowId, notes: []const u8) !void {
     try self.exec(
-        \\INSERT INTO notes(show_id, content)
-        \\VALUES (?1, ?2)
-        \\ON CONFLICT(show_id) DO UPDATE SET content = ?2
+        \\UPDATE shows SET notes = ?2 WHERE id = ?1
     , &.{
         .{ .i64 = show_id.inner },
         .{ .text = notes },
@@ -987,7 +1006,6 @@ pub fn removeShow(self: *Db, id: types.ShowId) !void {
     try self.exec(
         \\DELETE FROM paused_shows WHERE show_id = ?1;
         \\DELETE FROM show_ratings WHERE show_id = ?1;
-        \\DELETE FROM notes WHERE show_id = ?1;
         \\DELETE FROM episode_watch_status WHERE episode_id IN (
         \\    SELECT id FROM episodes WHERE show_id = ?1
         \\);

@@ -18,11 +18,21 @@ class MoviePage {
 
     const watch_button = document.getElementById("watch-button");
     watch_button.onclick = () => this.toggle_watch_status();
+
+    this.notes_text_area = document.getElementById("notes-text-area");
+    const save_notes = document.getElementById("save-notes");
+    save_notes.onclick = () => this.save_notes();
   }
 
   async delete_movie() {
     await delete_movie(this.movie.id);
     window.location.href = "watch_list.html?movies=true";
+  }
+
+  async save_notes() {
+    const movie = window.structuredClone(this.movie);
+    movie.notes = this.notes_text_area.value;
+    await this.put_movie(movie);
   }
 
   async toggle_watch_status() {
@@ -56,6 +66,8 @@ class MoviePage {
       "theater-release-date",
     );
     update_release_date(this.movie.home_release_date, "home-release-date");
+
+    this.notes_text_area.value = this.movie.notes;
 
     const ratings_div = document.getElementById("ratings");
     ratings_div.innerHTML = "";

@@ -157,6 +157,7 @@ pub const MovieUpdate = struct {
     id: i64,
     watched: bool,
     rating_id: ?i64 = null,
+    notes: ?[]const u8 = null,
 };
 
 pub const SetRatingsRequest = struct {
@@ -229,4 +230,5 @@ pub const Movie = struct {
     theater_release_date: ?Date,
     home_release_date: ?Date,
     last_update_time: ?std.Io.Timestamp,
+    notes: ?[]const u8,
 };

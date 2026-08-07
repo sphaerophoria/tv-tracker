@@ -653,6 +653,9 @@ pub const Connection = struct {
 
                 try server.db.setMovieWatchStatus(id, watch_date);
                 try server.db.setMovieRating(id, if (update.rating_id) |r| .{ .inner = r } else null);
+                if (update.notes) |notes| {
+                    try server.db.setMovieNotes(id, notes);
+                }
 
                 const movie = try server.db.getMovie(self.alloc.general(), id) orelse return response_404;
                 const out_body = try std.json.Stringify.valueAlloc(self.alloc.general(), movie, .{});
