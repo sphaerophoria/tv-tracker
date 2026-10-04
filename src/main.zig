@@ -195,7 +195,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const event = try io.service(ids.runtime);
         switch (event) {
             ids.server.total.start...ids.server.total.end => {
-                try server.service(event, ids.server);
+                server.service(event, ids.server);
             },
             ids.rescan => {
                 var val: u64 = 0;

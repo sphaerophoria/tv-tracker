@@ -147,7 +147,13 @@ pub fn poll(self: *MovieUpdater, loop: *sphtud.io.Loop, id: usize) !void {
     switch (self.state) {
         .idle => return,
         .query_pages => |*qp| {
-            const result = try qp.req.poll(loop, id) orelse return;
+            const result = qp.req.poll(loop, id) catch |e| {
+                std.log.err("Failed to update movies\nFailed to make page query list: {t}", .{e});
+                qp.req.deinit();
+                try self.alloc.reset();
+                self.state = .idle;
+                return;
+            } orelse return;
 
             const gpa = self.alloc.general();
             const parsed = try SparqlResponse.parse(gpa, result);

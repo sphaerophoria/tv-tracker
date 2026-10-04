@@ -85,39 +85,13 @@ pub fn deinit(self: *Server) void {
     self.alloc.deinit();
 }
 
-pub fn service(self: *Server, id: usize, comptime ids: Ids) !void {
+pub fn service(self: *Server, id: usize, comptime ids: Ids) void {
     switch (id) {
         ids.accept => {
             while (true) {
-                const conn_fd = sphtud.io.accept(self.listener) catch |e| {
+                self.tryAccept(ids) catch |e| {
                     if (e == error.WouldBlock) return;
-                    return e;
-                };
-                errdefer sphtud.io.close(conn_fd);
-
-                const expansion_alloc = self.alloc.expansion();
-                const conn = try self.pool.acquire(expansion_alloc);
-                errdefer self.pool.release(expansion_alloc, conn.handle);
-
-                try self.loop.register(.{
-                    .id = ids.connection.start + conn.handle * Ids.connection_concurrency,
-                    .handle = conn_fd,
-                    .read = true,
-                    .write = true,
-                });
-
-                conn.val.* = .{
-                    .alloc = try self.alloc.makeSubAlloc("connection"),
-                    .fd = conn_fd,
-                    .reader_buf = undefined,
-                    .writer_buf = undefined,
-                    .body_buf = undefined,
-                    .reader = .init(conn_fd, &conn.val.reader_buf),
-                    .http_reader = .init(&conn.val.reader.interface),
-                    .writer = .init(conn_fd, &conn.val.writer_buf),
-                    .body = .empty,
-                    .state = .recv_head,
-                    .base_id = ids.connection.start + conn.handle * Ids.connection_concurrency,
+                    std.log.err("Failed to accept new connection: {t}", .{e});
                 };
             }
         },
@@ -138,6 +112,36 @@ pub fn service(self: *Server, id: usize, comptime ids: Ids) !void {
         },
         else => unreachable,
     }
+}
+
+fn tryAccept(self: *Server, comptime ids: Ids) !void {
+    const conn_fd = try sphtud.io.accept(self.listener);
+    errdefer sphtud.io.close(conn_fd);
+
+    const expansion_alloc = self.alloc.expansion();
+    const conn = try self.pool.acquire(expansion_alloc);
+    errdefer self.pool.release(expansion_alloc, conn.handle);
+
+    try self.loop.register(.{
+        .id = ids.connection.start + conn.handle * Ids.connection_concurrency,
+        .handle = conn_fd,
+        .read = true,
+        .write = true,
+    });
+
+    conn.val.* = .{
+        .alloc = try self.alloc.makeSubAlloc("connection"),
+        .fd = conn_fd,
+        .reader_buf = undefined,
+        .writer_buf = undefined,
+        .body_buf = undefined,
+        .reader = .init(conn_fd, &conn.val.reader_buf),
+        .http_reader = .init(&conn.val.reader.interface),
+        .writer = .init(conn_fd, &conn.val.writer_buf),
+        .body = .empty,
+        .state = .recv_head,
+        .base_id = ids.connection.start + conn.handle * Ids.connection_concurrency,
+    };
 }
 
 pub const Connection = struct {
