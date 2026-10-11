@@ -28,6 +28,13 @@ const Updating = struct {
     in_flight: []tv_maze.Episodes,
     in_flight_show: []types.ShowId,
     available: std.DynamicBitSet,
+
+    fn deinit(self: *Updating) void {
+        for (0..self.in_flight.len) |i| {
+            if (self.available.isSet(i)) continue;
+            self.in_flight[i].deinit();
+        }
+    }
 };
 
 pub fn init(parent_alloc: *sphtud.alloc.Sphalloc, db: *Db, spawner: *sphtud.io.tls.Spawner, base_id: usize) !PeriodicUpdater {
@@ -59,6 +66,7 @@ pub fn trigger(self: *PeriodicUpdater) !void {
                 .in_flight_show = try gpa.alloc(types.ShowId, concurrency),
                 .available = try std.DynamicBitSet.initFull(gpa, concurrency),
             };
+            errdefer u.deinit();
 
             for (shows) |show| {
                 try u.queue.append(gpa, .{ .id = show.id, .remote_id = show.remote_id, .name = show.name });
@@ -97,7 +105,14 @@ pub fn poll(self: *PeriodicUpdater, loop: *sphtud.io.Loop, id: usize) !void {
     const episodes = episodes_opt orelse return;
 
     for (episodes) |episode| {
-        _ = try self.db.addEpisode(show_id, episode);
+        _ = self.db.addEpisode(show_id, episode) catch |e| {
+            std.log.err("Failed to update season {d}, episode {d} for {s}: {t}", .{
+                episode.season,
+                episode.episode,
+                episode.name,
+                e,
+            });
+        };
     }
 
     // All done. Mark available and queue a new one if there's more work to do
@@ -110,8 +125,9 @@ pub fn poll(self: *PeriodicUpdater, loop: *sphtud.io.Loop, id: usize) !void {
 
     if (u.available.count() == u.in_flight.len) {
         std.log.info("Finished DB update", .{});
-        try self.alloc.reset();
+        u.deinit();
         self.state = .empty;
+        try self.alloc.reset();
     }
 }
 

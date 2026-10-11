@@ -181,7 +181,9 @@ pub const Episodes = struct {
         switch (self.state) {
             .wait => |*w| {
                 const body = try w.fetcher.poll(loop, w.service_id) orelse return null;
-                self.state = .{ .finished = try parseEpisodes(w.fetcher.alloc, body) };
+                const result = try parseEpisodes(w.fetcher.alloc, body);
+                w.fetcher.deinit();
+                self.state = .{ .finished = result };
                 return self.state.finished;
             },
             .finished => |res| return res,
